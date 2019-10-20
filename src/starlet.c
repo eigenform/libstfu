@@ -18,9 +18,8 @@
 static int __init_mmu(starlet *e)
 {
 	// Main memory
-	e->mram = malloc(sizeof(mram));
-	uc_mem_map_ptr(e->uc, 0x00000000, 0x01800000, 7, e->mram->mem1);
-	uc_mem_map_ptr(e->uc, 0x10000000, 0x04000000, 7, e->mram->mem2);
+	uc_mem_map_ptr(e->uc, 0x00000000, 0x01800000, 7, e->mram.mem1);
+	uc_mem_map_ptr(e->uc, 0x10000000, 0x04000000, 7, e->mram.mem2);
 
 	// MMIOs
 	uc_mem_map_ptr(e->uc, 0x0d010000, 0x00000400, 7, e->iomem.nand);
@@ -44,11 +43,7 @@ static int __init_mmu(starlet *e)
 
 // __destroy_mmu()
 // Free any backing memory we allocated.
-static int __destroy_mmu(starlet *emu) 
-{ 
-	free(emu->mram);
-	return 0; 
-}
+static int __destroy_mmu(starlet *emu) { return 0; }
 
 // __hook_unmapped()
 // Fired on UC_HOOK_MEM_UNMAPPED events.
@@ -77,6 +72,14 @@ static bool __hook_timer(uc_engine *uc, uc_mem_type type,
 	*(u32*)&emu->iomem.hlwd[0x10] += 10;
 	log("HW_TIMER=%08x\n", *(u32*)&emu->iomem.hlwd[0x10]);
 }
+
+// __hook_simple_bp()
+// Simple breakpoint hook
+static void __hook_simple_bp(uc_engine *uc, u64 addr, u32 size, starlet *emu)
+{ 
+	emu->halt_code = HALT_BP;
+}
+
 
 // __register_hooks()
 // Register all default hooks necessary for emulation.
@@ -159,7 +162,7 @@ int starlet_run(starlet *emu)
 		// Let Unicorn emulate for some number of instructions.
 		// I don't know how efficient this is ...
 
-		err = uc_emu_start(emu->uc, pc, 0, 100, 0);
+		err = uc_emu_start(emu->uc, pc, 0, 0, 0x40);
 
 		// Handle any Unicorn-specific exceptions here.
 		// If there are none, move onto the halt-code check.
@@ -190,6 +193,24 @@ int starlet_run(starlet *emu)
 		{
 			dbg("%s\n", "mainloop cleared NAND busy");
 			*(u32*)&emu->iomem.nand[0x00] = temp & 0x7fffffff;
+		}
+		temp = htobe32(*(u32*)&emu->iomem.aes[0x00]);
+		if (temp & 0x80000000)
+		{
+			dbg("%s\n", "mainloop cleared AES busy");
+			*(u32*)&emu->iomem.aes[0x00] = temp & 0x7fffffff;
+		}
+		temp = htobe32(*(u32*)&emu->iomem.sha[0x00]);
+		if (temp & 0x80000000)
+		{
+			dbg("%s\n", "mainloop cleared SHA busy");
+			*(u32*)&emu->iomem.sha[0x00] = temp & 0x7fffffff;
+		}
+		temp = htobe32(*(u32*)&emu->iomem.hlwd[0x1ec]);
+		if (temp & 0x80000000)
+		{
+			dbg("%s\n", "mainloop cleared EFUSE busy");
+			*(u32*)&emu->iomem.hlwd[0x1ec] = temp & 0x7fffffff;
 		}
 
 		
@@ -254,6 +275,11 @@ int starlet_load_boot0(starlet *emu, char *filename)
 		printf("Couldn't open %s\n", filename);
 		return -1;
 	}
+	if (filesize != 0x2000)
+	{
+		printf("boot0 must be 0x2000 bytes, got %08x\n", filesize);
+		return -1;
+	}
 
 	// Temporarily load onto the heap
 	u8 *data = malloc(filesize);
@@ -294,4 +320,34 @@ int starlet_load_nand_buffer(starlet *emu, void *buffer, u64 len)
 	memcpy(buf, buffer, len);
 	
 	return 0;
+}
+
+// starlet_load_otp()
+// Load EFUSE/one-time programmable memory from a file.
+int starlet_load_otp(starlet *e, char *filename)
+{
+	FILE *fp;
+	size_t bytes_read;
+	uc_err err;
+
+	size_t filesize = get_filesize(filename); 
+	if (filesize == -1)
+	{
+		printf("Couldn't open %s\n", filename);
+		return -1;
+	}
+
+	fp = fopen(filename, "rb");
+	bytes_read = fread(&e->otp, 1, 0x80, fp);
+	fclose(fp);
+	return 0;
+
+}
+
+// starlet_add_bp()
+// Add a simple breakpoint
+int starlet_add_bp(starlet *e, u32 addr)
+{
+	uc_hook x;
+	uc_hook_add(e->uc, &x, UC_HOOK_CODE, __hook_simple_bp, e,addr,addr);
 }

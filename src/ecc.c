@@ -18,9 +18,9 @@ static u8 parity(u8 x)
 }
 
 //static void calc_ecc(u8 *data, u8 *ecc)
-u32 calc_ecc(u8 *data)
+void calc_ecc(u8 *data, u8 *ecc)
 {
-	u32 ecc = 0;
+	//u32 ecc = 0;
 	u8 a[12][2];
 	int i, j;
 	u32 a0, a1;
@@ -55,10 +55,10 @@ u32 calc_ecc(u8 *data)
 		a1 |= a[j][1] << j;
 	}
 
-	//ecc[0] = a0;
-	//ecc[1] = a0 >> 8;
-	//ecc[2] = a1;
-	//ecc[3] = a1 >> 8;
+	ecc[0] = a0;
+	ecc[1] = a0 >> 8;
+	ecc[2] = a1;
+	ecc[3] = a1 >> 8;
 	
-	return (a0 << 24 | (a0 >> 8) << 16 | a1 << 8 | (a1 >> 8));
+	//return (a0 << 24 | (a0 >> 8) << 16 | a1 << 8 | (a1 >> 8));
 }

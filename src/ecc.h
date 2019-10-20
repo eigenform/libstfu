@@ -3,8 +3,8 @@
 
 #include "core_types.h"
 
-//static void calc_ecc(u8 *data, u8 *ecc);
-u32 calc_ecc(u8 *data);
+void calc_ecc(u8 *data, u8 *ecc);
+//u32 calc_ecc(u8 *data);
 
 #endif // _ECC_H
 

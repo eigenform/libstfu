@@ -22,6 +22,7 @@ typedef int64_t s64;
 
 enum halt_codes {
 	HALT_NONE = 0x10000000,
+	HALT_BP = 0x20000000,
 	HALT_EXCEPTION,
 };
 
@@ -58,6 +59,11 @@ typedef struct iomem
 	u8	  ddr[0x00000400]; // 1K, 0x0d8b4000
 } iomem;
 
+typedef struct otpmem
+{
+	u32 data[0x20];
+} otpmem;
+
 // State for various I/O devices (NAND, AES, SHA, etc.)
 
 typedef struct nand_interface
@@ -85,10 +91,14 @@ typedef struct starlet
 	u64 entrypoint;		// The initial entrypoint
 
 	nand_interface nand;	// NAND controller interface
+	iomem iomem;		// MMIO backing memory
 
 	sram sram;		// SRAM backing memory
-	iomem iomem;		// MMIO backing memory
-	mram *mram;		// Pointer to backing memory for main RAM
+
+	mram mram;		// Main RAM backing memory
+	otpmem otp;		// EFUSE/OTP backing memory
+
+
 } starlet;
 
 

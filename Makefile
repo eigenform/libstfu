@@ -8,9 +8,9 @@
 MY_LIBUNICORN	:= ~/src/unicorn/libunicorn.so.1
 
 # For building libstfu.so
-LIBSTFU_LDEPS	:= -lunicorn -lpthread
+LIBSTFU_LDEPS	:= -lunicorn -lpthread -lcrypto
 LIBSTFU_CFLAGS	:= -shared -fPIC -g 
-LIBSTFU_SRC	:= src/starlet.c src/util.c src/mmio.c src/ecc.c
+LIBSTFU_SRC	:= src/starlet.c src/util.c src/mmio.c src/ecc.c src/sha1.c
 
 all:
 	gcc $(LIBSTFU_LDEPS) $(LIBSTFU_CFLAGS) $(LIBSTFU_SRC) -o libstfu.so
