@@ -15,8 +15,8 @@
 #define AES_CTRL		0x0d020000
 #define AES_SRC			0x0d020004
 #define AES_DEST		0x0d020008
-#define AES_KEY			0x0d02000c
-#define AES_IV			0x0d020010
+#define AES_KEY_FIFO		0x0d02000c
+#define AES_IV_FIFO		0x0d020010
 
 // SHA-1 engine
 #define SHA_CTRL		0x0d030000
