@@ -13,3 +13,20 @@ Team Twiizers members'] implementation of various things in
 This project will probably be _even hackier_ than `skyeye-starlet` for a
 long time.
 
+## Building
+Move into the project root and run `make`. This will build the libraries and
+some test binaries.
+
+I'm not interested in supported platforms other than Linux.
+
+## Usage
+Right now there are basically two cases - either you want to run emulation 
+through the entire boot process, or you want to start execution directly in
+some other binary (i.e. one of the bootloaders). For example, the tests require
+the following:
+
+- A dump of the boot ROM (`boot0`)
+- A dump of your Wii's EFUSE/OTP (one-time programmable) memory
+- A NAND dump from your Wii (you technically don't need a full dump if you're
+  trying to examine the boot process, just the first 0x200 pages or so)
+
