@@ -9,8 +9,14 @@
 #include "starlet.h"
 #include "util.h"
 
-#define DEBUG true
-#define LOGGING true
+#ifndef LOGGING
+#define LOGGING 0
+#endif
+
+#ifndef DEBUG
+#define DEBUG 0
+#endif
+
 
 // __init_mmu()
 // Initialize various memory mappings

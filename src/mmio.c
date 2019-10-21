@@ -17,6 +17,15 @@
 #include <openssl/aes.h>
 #include <unicorn/unicorn.h>
 
+#ifndef LOGGING
+#define LOGGING 0
+#endif
+
+#ifndef DEBUG
+#define DEBUG 0
+#endif
+
+
 
 #define NAND_PAGE_LEN	0x840
 
@@ -27,9 +36,6 @@
 
 #define NAND_CMD_RESET	0xff
 #define NAND_CMD_READ0b	0x30
-
-#define LOGGING 1
-#define DEBUG 1
 
 // ----------------------------------------------------------------------------
 
@@ -146,7 +152,7 @@ static void handle_aes_command(starlet *e, s64 value)
 			AES_set_decrypt_key(aes_key_fifo, 128, &key);
 			AES_cbc_encrypt(aes_src_buf, aes_dst_buf, len, &key, 
 				use_tmp_iv?tmp_iv:aes_iv_fifo, AES_DECRYPT);
-			hexdump("AES data", aes_dst_buf, 0x100);
+			//hexdump("AES data", aes_dst_buf, 0x100);
 		}
 		else
 		{
@@ -186,10 +192,10 @@ static bool __mmio_aes(uc_engine *uc, uc_mem_type type, u64 address,
 			aes_key_fifo[0x0d] = (value >> 16) & 0xff;
 			aes_key_fifo[0x0e] = (value >> 8) & 0xff;
 			aes_key_fifo[0x0f] = value & 0xff;
-			printf("KEY FIFO: ");
-			for (int i = 0; i < 0x10; i++)
-				printf("%02x", aes_key_fifo[i]);
-			printf("\n");
+			//printf("KEY FIFO: ");
+			//for (int i = 0; i < 0x10; i++)
+			//	printf("%02x", aes_key_fifo[i]);
+			//printf("\n");
 			break;
 		case AES_IV_FIFO:
 			dbg("AES IV FIFO add %08x\n", value);
@@ -198,10 +204,10 @@ static bool __mmio_aes(uc_engine *uc, uc_mem_type type, u64 address,
 			aes_iv_fifo[0x0d] = (value >> 16) & 0xff;
 			aes_iv_fifo[0x0e] = (value >> 8) & 0xff;
 			aes_iv_fifo[0x0f] = value & 0xff;
-			printf("IV FIFO: ");
-			for (int i = 0; i < 0x10; i++)
-				printf("%02x", aes_iv_fifo[i]);
-			printf("\n");
+			//printf("IV FIFO: ");
+			//for (int i = 0; i < 0x10; i++)
+			//	printf("%02x", aes_iv_fifo[i]);
+			//printf("\n");
 
 			break;
 		default: break;

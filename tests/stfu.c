@@ -1,5 +1,5 @@
-#include "starlet.h"
 #include <stdio.h>
+#include "starlet.h"
 
 static starlet emu;
 
