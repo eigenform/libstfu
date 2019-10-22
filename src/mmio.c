@@ -48,9 +48,10 @@ void nand_dma_write(starlet *starlet, u32 flags, u32 len)
 	u32 eccfix_addr = 0;
 
 	// Grab parameters from the MMIO
-	u32 addr2 = be32(*(u32*)&starlet->iomem.nand[0x0c]);
-	u32 data_addr = be32(*(u32*)&starlet->iomem.nand[0x10]);
-	u32 ecc_addr = be32(*(u32*)&starlet->iomem.nand[0x14]);
+
+	u32 addr2 = read32(starlet->uc, NAND_ADDR2);
+	u32 data_addr = read32(starlet->uc, NAND_DATABUF);
+	u32 ecc_addr = read32(starlet->uc, NAND_ECCBUF);
 
 	// Get the offset of source data in the NAND buffer.
 	// FIXME: this extra copy into nand_buf is not necessary
@@ -79,7 +80,6 @@ void nand_dma_write(starlet *starlet, u32 flags, u32 len)
 			{
 				eccfix_addr = (ecc_addr ^ 0x40) + (i * 4);
 				calc_ecc(nand_buf + (0x200 * i), ecc);
-				dbg("wrote ecc %08x at %08x\n", *(u32*)ecc, eccfix_addr);
 				uc_mem_write(starlet->uc, eccfix_addr, &ecc,4);
 			}
 		}
@@ -116,9 +116,9 @@ static bool __mmio_nand(uc_engine *uc, uc_mem_type type, u64 address,
 	{
 		switch (address) {
 		case NAND_CTRL:
-			tmp = be32(*(u32*)&e->iomem.nand[0]);
+			tmp = read32(uc, NAND_CTRL);
 			//dbg("NAND_CTRL cleared with %08x\n", tmp & 0x7fffffff);
-			*(u32*)&e->iomem.nand[0] = tmp & 0x7fffffff;
+			write32(uc, NAND_CTRL, tmp & 0x7fffffff);
 			break;
 		default: break;
 		}
@@ -149,8 +149,8 @@ static u8 aes_dst_buf[0x10000];
 static void handle_aes_command(starlet *e, s64 value)
 {
 	u32 len = ((value & 0xfff) + 1) * 0x10;
-	u32 src_addr = be32(*(u32*)&e->iomem.aes[0x04]);
-	u32 dst_addr = be32(*(u32*)&e->iomem.aes[0x08]);
+	u32 src_addr = read32(e->uc, AES_SRC);
+	u32 dst_addr = read32(e->uc, AES_DST);
 	bool use_tmp_iv = (value & 0x1000) ? true : false;
 	bool use_aes = (value & 0x10000000) ? true : false;
 	bool decrypt = (value & 0x08000000) ? true : false;
@@ -185,8 +185,8 @@ static void handle_aes_command(starlet *e, s64 value)
 	uc_mem_write(e->uc, dst_addr, aes_dst_buf, len);
 	memcpy(tmp_iv, aes_src_buf + (len - 0x10), 0x10);
 
-	*(u32*)&e->iomem.aes[0x04] = be32(src_addr + len);
-	*(u32*)&e->iomem.aes[0x08] = be32(dst_addr + len);
+	write32(e->uc, AES_SRC, src_addr + len);
+	write32(e->uc, AES_DST, dst_addr + len);
 }
 
 // __mmio_aes()
@@ -235,9 +235,9 @@ static bool __mmio_aes(uc_engine *uc, uc_mem_type type, u64 address,
 	{
 		switch (address) {
 		case AES_CTRL:
-			tmp = be32(*(u32*)&e->iomem.aes[0]);
+			tmp = read32(uc, AES_CTRL);
 			//dbg("AES_CTRL cleared with %08x\n", tmp & 0x7fffffff);
-			*(u32*)&e->iomem.aes[0] = tmp & 0x7fffffff;
+			write32(uc, AES_CTRL, tmp & 0x7fffffff);
 			break;
 		default: break;
 		}
@@ -260,33 +260,33 @@ static void handle_sha_command(starlet *e, s64 value)
 {
 
 	dbg("pre sha_ctx  %08x%08x%08x%08x%08x\n", 
-			sha_ctx.Message_Digest[0],
-			sha_ctx.Message_Digest[1],
-			sha_ctx.Message_Digest[2],
-			sha_ctx.Message_Digest[3],
-			sha_ctx.Message_Digest[4]);
+			read32(e->uc, SHA_H0),
+			read32(e->uc, SHA_H1),
+			read32(e->uc, SHA_H2),
+			read32(e->uc, SHA_H3),
+			read32(e->uc, SHA_H4));
 
 
 	u32 len = ((value & 0xfff) + 1) * 0x40;
-	u32 src_addr = be32(*(u32*)&e->iomem.sha[0x04]);
+	u32 src_addr = read32(e->uc, SHA_SRC);
 	uc_mem_read(e->uc, src_addr, sha_buf, len);
 
 	dbg("SHA digest, addr=%08x, len=%08x\n", src_addr, len);
 	SHA1Input(&sha_ctx, sha_buf, len);
 
-	*(u32*)&e->iomem.sha[0x04] = be32(src_addr + len);
-	*(u32*)&e->iomem.sha[0x08] = sha_ctx.Message_Digest[0];
-	*(u32*)&e->iomem.sha[0x0c] = sha_ctx.Message_Digest[1];
-	*(u32*)&e->iomem.sha[0x10] = sha_ctx.Message_Digest[2];
-	*(u32*)&e->iomem.sha[0x14] = sha_ctx.Message_Digest[3];
-	*(u32*)&e->iomem.sha[0x18] = sha_ctx.Message_Digest[4];
+	write32(e->uc, SHA_SRC, src_addr + len);
+	write32(e->uc, SHA_H0, sha_ctx.Message_Digest[0]);
+	write32(e->uc, SHA_H1, sha_ctx.Message_Digest[1]);
+	write32(e->uc, SHA_H2, sha_ctx.Message_Digest[2]);
+	write32(e->uc, SHA_H3, sha_ctx.Message_Digest[3]);
+	write32(e->uc, SHA_H4, sha_ctx.Message_Digest[4]);
 
 	dbg("post sha_ctx  %08x%08x%08x%08x%08x\n", 
-			sha_ctx.Message_Digest[0],
-			sha_ctx.Message_Digest[1],
-			sha_ctx.Message_Digest[2],
-			sha_ctx.Message_Digest[3],
-			sha_ctx.Message_Digest[4]);
+			read32(e->uc, SHA_H0),
+			read32(e->uc, SHA_H1),
+			read32(e->uc, SHA_H2),
+			read32(e->uc, SHA_H3),
+			read32(e->uc, SHA_H4));
 
 	memset(sha_buf, 0, 0x10000);
 }
@@ -326,9 +326,9 @@ static bool __mmio_sha(uc_engine *uc, uc_mem_type type, u64 address,
 	{
 		switch (address) {
 		case SHA_CTRL:
-			tmp = be32(*(u32*)&e->iomem.sha[0]);
+			tmp = read32(uc, SHA_CTRL);
 			//dbg("SHA_CTRL cleared with %08x\n", tmp & 0x7fffffff);
-			*(u32*)&e->iomem.sha[0] = tmp & 0x7fffffff;
+			write32(uc, SHA_CTRL, tmp & 0x7fffffff);
 			break;
 		default: break;
 		}
@@ -354,8 +354,8 @@ static bool __mmio_hlwd(uc_engine *uc, uc_mem_type type, u64 address,
 		// Update the timer before every read.
 		// Not clear if this actually affects performance or accuracy.
 		case HW_TIMER:
-			tmp = *(u32*)&e->iomem.hlwd[0x10];
-			*(u32*)&e->iomem.hlwd[0x10] = tmp + 100;
+			tmp = read32(uc, HW_TIMER);
+			write32(uc, HW_TIMER, tmp + 100);
 			//dbg("HW_TIMER=%08x\n", tmp+5);
 			break;
 
@@ -363,9 +363,9 @@ static bool __mmio_hlwd(uc_engine *uc, uc_mem_type type, u64 address,
 
 		// Clear the busy bit every time someone reads
 		case EFUSE_ADDR:
-			tmp = be32(*(u32*)&e->iomem.hlwd[0x1ec]);
+			tmp = read32(uc, EFUSE_ADDR);
 			//dbg("EFUSE_ADDR cleared with %08x\n", tmp & 0x7fffffff);
-			*(u32*)&e->iomem.hlwd[0x1ec] = tmp & 0x7fffffff;
+			write32(uc, EFUSE_ADDR, tmp & 0x7fffffff);
 			break;
 
 		// Suppress messages for these
@@ -431,13 +431,13 @@ static bool __mmio_hlwd(uc_engine *uc, uc_mem_type type, u64 address,
 			// Deal with this unknown AHB flush-related bit
 			if ((value & 0x10000) == 0)
 			{
-				tmp = be32(*(u32*)&e->iomem.hlwd[0x18c]);
-				*(u32*)&e->iomem.hlwd[0x18c] = be32(tmp | 9);
+				tmp = read32(uc, HW_BOOT0);
+				write32(uc, HW_BOOT0, tmp | 9);
 			}
 			else
 			{
-				tmp = be32(*(u32*)&e->iomem.hlwd[0x18c]);
-				*(u32*)&e->iomem.hlwd[0x18c] = be32(tmp & 0xfffffff6);
+				tmp = read32(uc, HW_BOOT0);
+				write32(uc, HW_BOOT0, tmp & 0xfffffff6);
 			}
 			break;
 		case HW_BOOT0:
@@ -451,9 +451,11 @@ static bool __mmio_hlwd(uc_engine *uc, uc_mem_type type, u64 address,
 		case EFUSE_ADDR:
 			if (value & 0x80000000)
 			{
+				// OTP dumps are typically already in BE, so
+				// we don't need to do any conversion here?
 				tmp = value & 0x1f;
-				dbg("Set EFUSE_DATA to %08x\n", be32(e->otp.data[tmp]));
-				*(u32*)&e->iomem.hlwd[0x1f0] = be32(e->otp.data[tmp]);
+				dbg("Set EFUSE_DATA to %08x\n", e->otp.data[tmp]);
+				write32(uc, EFUSE_DATA, be32toh(e->otp.data[tmp]));
 			}
 			break;
 
@@ -524,8 +526,7 @@ static bool __mmio_ddr(uc_engine *uc, uc_mem_type type, u64 address,
 		switch(address) {
 		case DDR_AHMFLUSH:
 			// Immediately acknowledge AHB flush requests
-			*(u16*)&e->iomem.ddr[0x22a] = htobe16(value);
-			//dbg("AHB flush ACKed %04x\n", htobe16(value));
+			write16(uc, DDR_AHMFLUSH_ACK, value);
 			break;
 		default: break;
 		}

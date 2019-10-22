@@ -25,10 +25,10 @@
 static int __init_mmu(starlet *e)
 {
 	// Main memory
-	//uc_mem_map_ptr(e->uc, 0x00000000, 0x01800000, 7, e->mram.mem1);
-	//uc_mem_map_ptr(e->uc, 0x10000000, 0x04000000, 7, e->mram.mem2);
-	uc_mem_map(e->uc, 0x00000000, 0x01800000, 7);
-	uc_mem_map(e->uc, 0x10000000, 0x04000000, 7);
+	uc_mem_map_ptr(e->uc, 0x00000000, 0x01800000, 7, e->mram.mem1);
+	uc_mem_map_ptr(e->uc, 0x10000000, 0x04000000, 7, e->mram.mem2);
+	//uc_mem_map(e->uc, 0x00000000, 0x01800000, 7);
+	//uc_mem_map(e->uc, 0x10000000, 0x04000000, 7);
 
 	// MMIOs
 	uc_mem_map_ptr(e->uc, 0x0d010000, 0x00000400, 7, e->iomem.nand);
@@ -93,7 +93,6 @@ static void __hook_block(uc_engine *uc, u64 addr, u32 size, starlet *emu)
 }
 
 // __hook_enter_boot1()
-// Basic block hook
 static void __hook_enter_boot1(uc_engine *uc, u64 addr, u32 size, starlet *emu)
 { 
 	u32 val;
@@ -106,7 +105,18 @@ static void __hook_enter_boot1(uc_engine *uc, u64 addr, u32 size, starlet *emu)
 	}
 }
 
-
+// __hook_enter_boot2()
+static void __hook_enter_boot2(uc_engine *uc, u64 addr, u32 size, starlet *emu)
+{ 
+	u32 val;
+	uc_reg_read(uc, UC_ARM_REG_PC, &val);
+	if (emu->state & STATE_BOOT1)
+	{
+		emu->state &= ~STATE_BOOT1;
+		emu->state |= STATE_BOOT2;
+		dbg("ENTERED BOOT2 at PC=%08x\n", val);
+	}
+}
 
 // __register_hooks()
 // Register all default hooks necessary for emulation.
@@ -118,57 +128,13 @@ static int __register_hooks(starlet *e)
 
 	uc_hook_add(e->uc, &x,UC_HOOK_CODE,__hook_enter_boot1, e,
 			0xfff00000, 0xfff00000);
+	uc_hook_add(e->uc, &x,UC_HOOK_CODE,__hook_enter_boot2, e,
+			0xffff0000, 0xffff0000);
+
 	//uc_hook_add(e->uc, &x,UC_HOOK_BLOCK,__hook_block, NULL,1,0);
 
 	register_mmio_hooks(e);
 }
-
-void __mmio_nand_done(starlet *emu)
-{
-	u32 temp;
-	temp = be32(*(u32*)&emu->iomem.nand[0x00]);
-	if (temp & MMIO_BUSY_BIT)
-	{
-		dbg("%s\n", "mainloop cleared NAND busy");
-		*(u32*)&emu->iomem.nand[0x00] = temp & 0x7fffffff;
-	}
-}
-
-
-void __mmio_aes_done(starlet *emu)
-{
-	u32 temp;
-	temp = be32(*(u32*)&emu->iomem.aes[0x00]);
-	if (temp & MMIO_BUSY_BIT)
-	{
-		dbg("%s\n", "mainloop cleared AES busy");
-		*(u32*)&emu->iomem.aes[0x00] = temp & 0x7fffffff;
-	}
-}
-
-void __mmio_sha_done(starlet *emu)
-{
-	u32 temp;
-	temp = be32(*(u32*)&emu->iomem.sha[0x00]);
-	if (temp & MMIO_BUSY_BIT)
-	{
-		dbg("%s\n", "mainloop cleared SHA busy");
-		*(u32*)&emu->iomem.sha[0x00] = temp & 0x7fffffff;
-	}
-}
-
-void __mmio_otp_done(starlet *emu)
-{
-	u32 temp;
-	temp = be32(*(u32*)&emu->iomem.hlwd[0x1ec]);
-	if (temp & MMIO_BUSY_BIT)
-	{
-		dbg("%s\n", "mainloop cleared EFUSE busy");
-		*(u32*)&emu->iomem.hlwd[0x1ec] = temp & 0x7fffffff;
-	}
-}
-
-
 
 
 // ----------------------------------------------------------------------------
@@ -252,7 +218,9 @@ int starlet_run(starlet *emu)
 		// If the halt type indicates we should *actually* halt
 		if ((emu->halt_code != 0) && (emu->halt_code <= 0x10000))
 		{
-			dbg("Died with halt_code=%08x\n", emu->halt_code);
+			uc_reg_read(emu->uc, UC_ARM_REG_PC, &pc);
+			dbg("Died with halt_code=%08x, pc=%08x\n", 
+				emu->halt_code, pc);
 			break;
 		}
 	}

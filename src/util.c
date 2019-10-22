@@ -72,8 +72,29 @@ void hexdump(char *desc, void *addr, int len)
 
 
 
+uc_err uc_mem_read(uc_engine *uc, uint64_t address, void *bytes, size_t size);
+u32 read32(uc_engine *uc, u32 addr)
+{
+	u32 val;
+	uc_mem_read(uc, addr, &val, 4);
+	return htobe32(val);
+}
+u32 read16(uc_engine *uc, u32 addr)
+{
+	u16 val;
+	uc_mem_read(uc, addr, &val, 2);
+	return htobe16(val);
+}
 
-u32 be32(u32 x) { return htobe32(x); }
-u32 le32(u32 x) { return be32toh(x); }
-u32 be16(u32 x) { return htobe16(x); }
-u32 le16(u32 x) { return be16toh(x); }
+void write32(uc_engine *uc, u32 addr, u32 val)
+{
+	u32 value = be32toh(val);
+	uc_mem_write(uc, addr, &value, 4);
+}
+
+
+void write16(uc_engine *uc, u32 addr, u16 val)
+{
+	u16 value = be16toh(val);
+	uc_mem_write(uc, addr, &value, 2);
+}
