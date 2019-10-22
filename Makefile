@@ -16,4 +16,4 @@ clean:
 	make -C src/ clean
 	make -C tests/ clean
 
-.PHONY: clean 
+.PHONY: all libs test clean 

@@ -18,7 +18,8 @@ do { if (DEBUG) \
 size_t get_filesize(const char *filename);
 void hexdump(char *desc, void *addr, int len);
 
-u32 __be32(u32 x);
-u32 __le32(u32 x);
-
+u32 be32(u32 x);
+u32 le32(u32 x);
+u32 be16(u32 x);
+u32 le16(u32 x);
 #endif //_UTIL_H

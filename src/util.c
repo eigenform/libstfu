@@ -73,5 +73,7 @@ void hexdump(char *desc, void *addr, int len)
 
 
 
-u32 __be32(u32 x) { return htobe32(x); }
-u32 __le32(u32 x) { return be32toh(x); }
+u32 be32(u32 x) { return htobe32(x); }
+u32 le32(u32 x) { return be32toh(x); }
+u32 be16(u32 x) { return htobe16(x); }
+u32 le16(u32 x) { return be16toh(x); }

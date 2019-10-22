@@ -19,16 +19,33 @@ typedef int64_t s64;
 
 // Halt reason codes. The main loop uses either this enum, or Unicorn's codes
 // in order to distinguish exactly what needs to happen when execution halts.
+// 
+// Halt codes <= 0x10000 indicate that the emulator should actually halt.
 
 enum halt_codes {
-	HALT_NONE = 0x10000000,
-	HALT_BP = 0x20000000,
-	HALT_EXCEPTION,
+	HALT_NONE	= 0x00000000,
+	HALT_EXCEPTION	= 0x00004000, // Do you still need this?
+	HALT_BP		= 0x00008000, // Halt on a breakpoint
+
+	// The Unicorn error codes are <= 0x20~ish
+	// ...
+
+	// For catching MMIO things (might not be necessary)
+	HALT_MMIO_OTP	= 0x01000000,
+	HALT_MMIO_SHA	= 0x02000000,
+	HALT_MMIO_AES	= 0x04000000,
+	HALT_MMIO_NAND	= 0x08000000,
 };
 
 // Flags for book-keeping
 enum state {
-	STATE_INITED	= 0x8000000000000000,
+	STATE_INITED		= 0x8000000000000000,
+	STATE_BROM_UNMAPPED	= 0x4000000000000000,
+	STATE_SRAM_MIRRORED	= 0x2000000000000000,
+
+	STATE_BOOT0		= 0x0800000000000000,
+	STATE_BOOT1		= 0x0400000000000000,
+	STATE_BOOT2		= 0x0200000000000000,
 };
 
 // These containers are used to hold the actual backing memory for Unicorn.

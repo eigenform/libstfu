@@ -5,16 +5,17 @@
 #include <string.h>
 #include <endian.h>
 
+#include "hollywood.h"
 #include "core_types.h"
 #include "starlet.h"
 #include "util.h"
 
 #ifndef LOGGING
-#define LOGGING 0
+#define LOGGING 1
 #endif
 
 #ifndef DEBUG
-#define DEBUG 0
+#define DEBUG 1
 #endif
 
 
@@ -24,8 +25,10 @@
 static int __init_mmu(starlet *e)
 {
 	// Main memory
-	uc_mem_map_ptr(e->uc, 0x00000000, 0x01800000, 7, e->mram.mem1);
-	uc_mem_map_ptr(e->uc, 0x10000000, 0x04000000, 7, e->mram.mem2);
+	//uc_mem_map_ptr(e->uc, 0x00000000, 0x01800000, 7, e->mram.mem1);
+	//uc_mem_map_ptr(e->uc, 0x10000000, 0x04000000, 7, e->mram.mem2);
+	uc_mem_map(e->uc, 0x00000000, 0x01800000, 7);
+	uc_mem_map(e->uc, 0x10000000, 0x04000000, 7);
 
 	// MMIOs
 	uc_mem_map_ptr(e->uc, 0x0d010000, 0x00000400, 7, e->iomem.nand);
@@ -41,9 +44,9 @@ static int __init_mmu(starlet *e)
 	uc_mem_map_ptr(e->uc, 0xffff0000, 0x00010000, 7, e->sram.brom);
 	uc_mem_map_ptr(e->uc, 0xfffe0000, 0x00010000, 7, e->sram.bank_a);
 	uc_mem_map_ptr(e->uc, 0xfff00000, 0x00010000, 7, e->sram.bank_a);
+	uc_mem_map_ptr(e->uc, 0xfff10000, 0x00010000, 7, e->sram.bank_b);
 	uc_mem_map_ptr(e->uc, 0x0d400000, 0x00010000, 7, e->sram.bank_a);
 	uc_mem_map_ptr(e->uc, 0x0d410000, 0x00010000, 7, e->sram.bank_b);
-	uc_mem_map_ptr(e->uc, 0xfff10000, 0x00010000, 7, e->sram.bank_b);
 	return 0;
 }
 
@@ -70,21 +73,39 @@ static bool __hook_unmapped(uc_engine *uc, uc_mem_type type,
 	return false;
 }
 
-// __hook_timer()
-// Fired after successful read on HW_TIMER (does this actually work?)
-static bool __hook_timer(uc_engine *uc, uc_mem_type type,
-	u64 address, int size, s64 value, starlet *emu)
-{
-	*(u32*)&emu->iomem.hlwd[0x10] += 10;
-	log("HW_TIMER=%08x\n", *(u32*)&emu->iomem.hlwd[0x10]);
-}
 
 // __hook_simple_bp()
 // Simple breakpoint hook
 static void __hook_simple_bp(uc_engine *uc, u64 addr, u32 size, starlet *emu)
 { 
 	emu->halt_code = HALT_BP;
+	dbg("%s\n", "Hit breakpoint\n");
+	uc_emu_stop(uc);
 }
+
+// __hook_block()
+// Basic block hook
+static void __hook_block(uc_engine *uc, u64 addr, u32 size, starlet *emu)
+{ 
+	u32 val;
+	uc_reg_read(uc, UC_ARM_REG_PC, &val);
+	dbg("PC=%08x\n", val);
+}
+
+// __hook_enter_boot1()
+// Basic block hook
+static void __hook_enter_boot1(uc_engine *uc, u64 addr, u32 size, starlet *emu)
+{ 
+	u32 val;
+	uc_reg_read(uc, UC_ARM_REG_PC, &val);
+	if (emu->state & STATE_BOOT0)
+	{
+		emu->state &= ~STATE_BOOT0;
+		emu->state |= STATE_BOOT1;
+		dbg("ENTERED BOOT1 at PC=%08x\n", val);
+	}
+}
+
 
 
 // __register_hooks()
@@ -94,10 +115,59 @@ static int __register_hooks(starlet *e)
 {
 	uc_hook x, y, z;
 	uc_hook_add(e->uc, &x,UC_HOOK_MEM_UNMAPPED,__hook_unmapped, NULL,1,0);
-	uc_hook_add(e->uc, &y,UC_HOOK_MEM_READ_AFTER,__hook_timer, e, 
-			0x0d800010, 0x0d800010);
+
+	uc_hook_add(e->uc, &x,UC_HOOK_CODE,__hook_enter_boot1, e,
+			0xfff00000, 0xfff00000);
+	//uc_hook_add(e->uc, &x,UC_HOOK_BLOCK,__hook_block, NULL,1,0);
+
 	register_mmio_hooks(e);
 }
+
+void __mmio_nand_done(starlet *emu)
+{
+	u32 temp;
+	temp = be32(*(u32*)&emu->iomem.nand[0x00]);
+	if (temp & MMIO_BUSY_BIT)
+	{
+		dbg("%s\n", "mainloop cleared NAND busy");
+		*(u32*)&emu->iomem.nand[0x00] = temp & 0x7fffffff;
+	}
+}
+
+
+void __mmio_aes_done(starlet *emu)
+{
+	u32 temp;
+	temp = be32(*(u32*)&emu->iomem.aes[0x00]);
+	if (temp & MMIO_BUSY_BIT)
+	{
+		dbg("%s\n", "mainloop cleared AES busy");
+		*(u32*)&emu->iomem.aes[0x00] = temp & 0x7fffffff;
+	}
+}
+
+void __mmio_sha_done(starlet *emu)
+{
+	u32 temp;
+	temp = be32(*(u32*)&emu->iomem.sha[0x00]);
+	if (temp & MMIO_BUSY_BIT)
+	{
+		dbg("%s\n", "mainloop cleared SHA busy");
+		*(u32*)&emu->iomem.sha[0x00] = temp & 0x7fffffff;
+	}
+}
+
+void __mmio_otp_done(starlet *emu)
+{
+	u32 temp;
+	temp = be32(*(u32*)&emu->iomem.hlwd[0x1ec]);
+	if (temp & MMIO_BUSY_BIT)
+	{
+		dbg("%s\n", "mainloop cleared EFUSE busy");
+		*(u32*)&emu->iomem.hlwd[0x1ec] = temp & 0x7fffffff;
+	}
+}
+
 
 
 
@@ -150,9 +220,11 @@ int starlet_run(starlet *emu)
 	uc_err err;
 	u32 pc, cpsr;
 	u32 temp;
+	u64 err_code;
 
 	// Set the initial entrypoint
 	uc_reg_write(emu->uc, UC_ARM_REG_PC, &emu->entrypoint);
+	if (emu->state & STATE_BOOT0) dbg("%s\n", "ENTERED BOOT0");
 
 	// Do the main emulation loop; break out on errors
 	while (true)
@@ -165,63 +237,28 @@ int starlet_run(starlet *emu)
 		if (cpsr & 0x20) pc |= 1;
 
 		log("pc=%08x\n", pc);
-		// Let Unicorn emulate for some number of instructions.
-		// I don't know how efficient this is ...
+		err = uc_emu_start(emu->uc, pc, 0, 0, 0);
+		log("%s\n", "halted");
 
-		err = uc_emu_start(emu->uc, pc, 0, 0, 0x40);
-
-		// Handle any Unicorn-specific exceptions here.
-		// If there are none, move onto the halt-code check.
-
+		// If there is a Unicorn exception, pass the UC_ERR_ value
 		switch (err) {
-		case UC_ERR_OK: break;
+		case UC_ERR_OK: 
+			break;
 		default:
 			emu->halt_code = err;
 			break;
 		}
 
-		// Both Unicorn exceptions and hooks are expected to set the
-		// halt-code when emulation has stopped for some reason.
-		// When a halt-code is non-zero, we terminate the main loop.
-
-		if (emu->halt_code)
+		// If the halt type indicates we should *actually* halt
+		if ((emu->halt_code != 0) && (emu->halt_code <= 0x10000))
 		{
-			dbg("Halt code %08x\n", emu->halt_code);
-			return emu->halt_code;
+			dbg("Died with halt_code=%08x\n", emu->halt_code);
+			break;
 		}
-
-		// Since we expect that MMIO hooks immediately perform some
-		// actions on control register writes, for now this is the
-		// earliest point where we can unset busy bits on registers.
-
-		temp = htobe32(*(u32*)&emu->iomem.nand[0x00]);
-		if (temp & 0x80000000)
-		{
-			dbg("%s\n", "mainloop cleared NAND busy");
-			*(u32*)&emu->iomem.nand[0x00] = temp & 0x7fffffff;
-		}
-		temp = htobe32(*(u32*)&emu->iomem.aes[0x00]);
-		if (temp & 0x80000000)
-		{
-			dbg("%s\n", "mainloop cleared AES busy");
-			*(u32*)&emu->iomem.aes[0x00] = temp & 0x7fffffff;
-		}
-		temp = htobe32(*(u32*)&emu->iomem.sha[0x00]);
-		if (temp & 0x80000000)
-		{
-			dbg("%s\n", "mainloop cleared SHA busy");
-			*(u32*)&emu->iomem.sha[0x00] = temp & 0x7fffffff;
-		}
-		temp = htobe32(*(u32*)&emu->iomem.hlwd[0x1ec]);
-		if (temp & 0x80000000)
-		{
-			dbg("%s\n", "mainloop cleared EFUSE busy");
-			*(u32*)&emu->iomem.hlwd[0x1ec] = temp & 0x7fffffff;
-		}
-
-		
 	}
 }
+
+
 
 // starlet_load_code()
 // Read a file with some code into memory, then write it into the emulator
@@ -303,6 +340,7 @@ int starlet_load_boot0(starlet *emu, char *filename)
 
 	uc_mem_write(emu->uc, 0xffff0000, data, bytes_read);
 	emu->entrypoint = 0xffff0000;
+	emu->state |= STATE_BOOT0;
 
 	free(data);
 	return 0;

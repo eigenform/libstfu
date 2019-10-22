@@ -18,4 +18,4 @@ stfu:
 clean:
 	rm -fv ../test-boot0 ../stfu
 
-.PHONY: clean
+.PHONY: all clean

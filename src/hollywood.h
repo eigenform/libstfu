@@ -1,6 +1,8 @@
 #ifndef _HOLLYWOOD_H
 #define _HOLLYWOOD_H
 
+#define MMIO_BUSY_BIT		0x80000000
+
 // NAND controller
 #define NAND_CTRL		0x0d010000
 #define NAND_CFG		0x0d010004
@@ -71,8 +73,8 @@
 //#define HW_AHB_			0x0d80013c
 //#define HW_AHB_			0x0d800140
 
-#define HW_SPARE0
-#define HW_SPARE1_BOOT0     	0x0d80018c
+#define HW_SPARE0		0x0d800188
+#define HW_BOOT0		0x0d80018c
 
 #define EFUSE_ADDR    		0x0d8001ec
 #define EFUSE_DATA   		0x0d8001f0
