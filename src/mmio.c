@@ -170,7 +170,7 @@ static void handle_aes_command(starlet *e, s64 value)
 			AES_set_decrypt_key(aes_key_fifo, 128, &key);
 			AES_cbc_encrypt(aes_src_buf, aes_dst_buf, len, &key, 
 				use_tmp_iv?tmp_iv:aes_iv_fifo, AES_DECRYPT);
-			hexdump("AES data", aes_dst_buf, 0x100);
+			//hexdump("AES data", aes_dst_buf, 0x100);
 		}
 		else
 		{
@@ -198,7 +198,6 @@ static bool __mmio_aes(uc_engine *uc, uc_mem_type type, u64 address,
 
 	if (type == UC_MEM_WRITE)
 	{
-		log("AES write %08x on %08x\n", value, address);
 		switch (address) {
 		case AES_CTRL: 
 			if (value & 0x80000000)
@@ -211,10 +210,10 @@ static bool __mmio_aes(uc_engine *uc, uc_mem_type type, u64 address,
 			aes_key_fifo[0x0d] = (value >> 16) & 0xff;
 			aes_key_fifo[0x0e] = (value >> 8) & 0xff;
 			aes_key_fifo[0x0f] = value & 0xff;
-			printf("KEY FIFO: ");
-			for (int i = 0; i < 0x10; i++)
-				printf("%02x", aes_key_fifo[i]);
-			printf("\n");
+			//printf("KEY FIFO: ");
+			//for (int i = 0; i < 0x10; i++)
+			//	printf("%02x", aes_key_fifo[i]);
+			//printf("\n");
 			break;
 		case AES_IV_FIFO:
 			dbg("AES IV FIFO add %08x\n", value);
@@ -223,10 +222,10 @@ static bool __mmio_aes(uc_engine *uc, uc_mem_type type, u64 address,
 			aes_iv_fifo[0x0d] = (value >> 16) & 0xff;
 			aes_iv_fifo[0x0e] = (value >> 8) & 0xff;
 			aes_iv_fifo[0x0f] = value & 0xff;
-			printf("IV FIFO: ");
-			for (int i = 0; i < 0x10; i++)
-				printf("%02x", aes_iv_fifo[i]);
-			printf("\n");
+			//printf("IV FIFO: ");
+			//for (int i = 0; i < 0x10; i++)
+			//	printf("%02x", aes_iv_fifo[i]);
+			//printf("\n");
 			break;
 		default: break;
 		}
