@@ -32,8 +32,8 @@ int main(void)
 	starlet_load_otp(&emu, "otp.bin");
 
 	// Breakpoints on boot0/boot1 panic()
-	starlet_add_bp(&emu, 0xffff00bc);
-	starlet_add_bp(&emu, 0xfff00616);
+	//starlet_add_bp(&emu, 0xffff00bc);
+	//starlet_add_bp(&emu, 0xfff00616);
 
 	// Actually emulate something until we halt
 	starlet_run(&emu);

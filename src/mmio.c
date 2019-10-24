@@ -58,19 +58,19 @@ void nand_dma_write(starlet *starlet, u32 flags, u32 len)
 	u32 nand_off = addr2 * NAND_PAGE_LEN;
 	memcpy(nand_buf, &starlet->nand.data[nand_off], len);
 
-	dbg("NAND addr2=%08x nand_off=%08x data_addr=%08x ecc_addr=%08x\n", 
-		addr2, nand_off, data_addr, ecc_addr);
+	//dbg("NAND addr2=%08x nand_off=%08x data_addr=%08x ecc_addr=%08x\n", 
+	//	addr2, nand_off, data_addr, ecc_addr);
 
 	if (len == 0x800)
 	{
-		dbg("NAND dma on %08x, len=%08x\n", data_addr, len);
+		//dbg("NAND dma on %08x, len=%08x\n", data_addr, len);
 		uc_mem_write(starlet->uc, data_addr, nand_buf, len);
 		memset(nand_buf, 0, 0x10000);
 	}
 	else if (len == 0x840)
 	{
-		dbg("NAND dma on %08x, len=%08x\n", data_addr, 0x800);
-		dbg("NAND dma on %08x, len=%08x\n", ecc_addr, 0x40);
+		//dbg("NAND dma on %08x, len=%08x\n", data_addr, 0x800);
+		//dbg("NAND dma on %08x, len=%08x\n", ecc_addr, 0x40);
 		uc_mem_write(starlet->uc, data_addr, nand_buf, 0x800);
 		uc_mem_write(starlet->uc, ecc_addr, &nand_buf[0x800], 0x40);
 
@@ -159,7 +159,7 @@ static void handle_aes_command(starlet *e, s64 value)
 	memset(aes_src_buf, 0, 0x10000);
 	uc_mem_read(e->uc, src_addr, aes_src_buf, len);
 
-	dbg("AES dma on %08x, len=%08x\n", dst_addr, len);
+	//dbg("AES dma on %08x, len=%08x\n", dst_addr, len);
 
 	if (use_aes)
 	{
@@ -204,7 +204,7 @@ static bool __mmio_aes(uc_engine *uc, uc_mem_type type, u64 address,
 				handle_aes_command(e, value);
 			break;
 		case AES_KEY_FIFO:
-			dbg("AES KEY FIFO add %08x\n", value);
+			//dbg("AES KEY FIFO add %08x\n", value);
 			memmove(aes_key_fifo, aes_key_fifo + 0x4, 0x0c);
 			aes_key_fifo[0x0c] = value >> 24;
 			aes_key_fifo[0x0d] = (value >> 16) & 0xff;
@@ -216,7 +216,7 @@ static bool __mmio_aes(uc_engine *uc, uc_mem_type type, u64 address,
 			//printf("\n");
 			break;
 		case AES_IV_FIFO:
-			dbg("AES IV FIFO add %08x\n", value);
+			//dbg("AES IV FIFO add %08x\n", value);
 			memmove(aes_iv_fifo, aes_iv_fifo + 0x4, 0x0c);
 			aes_iv_fifo[0x0c] = value >> 24;
 			aes_iv_fifo[0x0d] = (value >> 16) & 0xff;
@@ -258,19 +258,19 @@ u8 sha_buf[0x10000];
 static void handle_sha_command(starlet *e, s64 value)
 {
 
-	dbg("pre sha_ctx  %08x%08x%08x%08x%08x\n", 
-			read32(e->uc, SHA_H0),
-			read32(e->uc, SHA_H1),
-			read32(e->uc, SHA_H2),
-			read32(e->uc, SHA_H3),
-			read32(e->uc, SHA_H4));
+	//dbg("pre sha_ctx  %08x%08x%08x%08x%08x\n", 
+	//		read32(e->uc, SHA_H0),
+	//		read32(e->uc, SHA_H1),
+	//		read32(e->uc, SHA_H2),
+	//		read32(e->uc, SHA_H3),
+	//		read32(e->uc, SHA_H4));
 
 
 	u32 len = ((value & 0xfff) + 1) * 0x40;
 	u32 src_addr = read32(e->uc, SHA_SRC);
 	uc_mem_read(e->uc, src_addr, sha_buf, len);
 
-	dbg("SHA digest, addr=%08x, len=%08x\n", src_addr, len);
+	//dbg("SHA digest, addr=%08x, len=%08x\n", src_addr, len);
 	SHA1Input(&sha_ctx, sha_buf, len);
 
 	write32(e->uc, SHA_SRC, src_addr + len);
@@ -280,12 +280,12 @@ static void handle_sha_command(starlet *e, s64 value)
 	write32(e->uc, SHA_H3, sha_ctx.Message_Digest[3]);
 	write32(e->uc, SHA_H4, sha_ctx.Message_Digest[4]);
 
-	dbg("post sha_ctx  %08x%08x%08x%08x%08x\n", 
-			read32(e->uc, SHA_H0),
-			read32(e->uc, SHA_H1),
-			read32(e->uc, SHA_H2),
-			read32(e->uc, SHA_H3),
-			read32(e->uc, SHA_H4));
+	//dbg("post sha_ctx  %08x%08x%08x%08x%08x\n", 
+	//		read32(e->uc, SHA_H0),
+	//		read32(e->uc, SHA_H1),
+	//		read32(e->uc, SHA_H2),
+	//		read32(e->uc, SHA_H3),
+	//		read32(e->uc, SHA_H4));
 
 	memset(sha_buf, 0, 0x10000);
 }
@@ -338,6 +338,8 @@ static bool __mmio_sha(uc_engine *uc, uc_mem_type type, u64 address,
 
 
 // ----------------------------------------------------------------------------
+
+void __hook_halt(uc_engine *uc, u64 addr, u32 size, starlet *emu);
 
 // __mmio_hlwd()
 // Hollywood register MMIO handler
@@ -420,10 +422,13 @@ static bool __mmio_hlwd(uc_engine *uc, uc_mem_type type, u64 address,
 		switch (address) {
 		case HW_SRNPROT:
 			// Enable the SRAM mirror
-			if (value & 0x20) 
+			if ((value & 0x20) && !(e->state & STATE_SRAM_MIRROR_ON))
 			{
-				dbg("%s\n", "SRAM mirror on");
-				e->state |= STATE_SRAM_MIRRORED;
+				dbg("%s\n", "Caught write: SRAM mirror on");
+				e->state |= STATE_SRAM_MIRROR_ON;
+				e->halt_code = HALT_BROM_ON_TO_SRAM_ON;
+				uc_hook_add(e->uc, &e->halt_hook,
+					UC_HOOK_CODE,__hook_halt, e,1,0);
 			}
 			break;
 		case HW_SPARE0:
@@ -441,10 +446,13 @@ static bool __mmio_hlwd(uc_engine *uc, uc_mem_type type, u64 address,
 			break;
 		case HW_BOOT0:
 			// Unmap the boot ROM
-			if (value & 0x1000) 
+			if ((value & 0x1000) && (e->state & STATE_BROM_MAP_ON))
 			{
-				dbg("%s\n", "BROM unmapped");
-				e->state |= STATE_BROM_UNMAPPED;
+				dbg("%s\n", "Caught write: BROM unmapped");
+				e->state &= ~STATE_BROM_MAP_ON;
+				e->halt_code = HALT_SRAM_ON_TO_BROM_OFF;
+				uc_hook_add(e->uc, &e->halt_hook,
+					UC_HOOK_CODE,__hook_halt, e,1,0);
 			}
 			break;
 		case EFUSE_ADDR:
@@ -453,7 +461,7 @@ static bool __mmio_hlwd(uc_engine *uc, uc_mem_type type, u64 address,
 				// OTP dumps are typically already in BE, so
 				// we don't need to do any conversion here?
 				tmp = value & 0x1f;
-				dbg("Set EFUSE_DATA to %08x\n", e->otp.data[tmp]);
+				//dbg("Set EFUSE_DATA to %08x\n", e->otp.data[tmp]);
 				write32(uc, EFUSE_DATA, be32toh(e->otp.data[tmp]));
 			}
 			break;

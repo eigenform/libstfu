@@ -20,28 +20,28 @@ typedef int64_t s64;
 // Halt reason codes. The main loop uses either this enum, or Unicorn's codes
 // in order to distinguish exactly what needs to happen when execution halts.
 // 
-// Halt codes <= 0x10000 indicate that the emulator should actually halt.
+// Halt codes < 0x10000 indicate that the emulator should actually halt.
 
 enum halt_codes {
-	HALT_NONE	= 0x00000000,
-	HALT_EXCEPTION	= 0x00004000, // Do you still need this?
-	HALT_BP		= 0x00008000, // Halt on a breakpoint
 
-	// The Unicorn error codes are <= 0x20~ish
-	// ...
+	// Halt codes < 0x10000 break out of the main loop
+	HALT_NONE			= 0x00000000,
+	HALT_EXCEPTION			= 0x00004000,
+	HALT_BP				= 0x00008000,
+	
+	// These are the "non-halting" halt codes
+	
+	HALT_BLOCK_HOOK_DONE		= 0x00080000,
 
-	// For catching MMIO things (might not be necessary)
-	HALT_MMIO_OTP	= 0x01000000,
-	HALT_MMIO_SHA	= 0x02000000,
-	HALT_MMIO_AES	= 0x04000000,
-	HALT_MMIO_NAND	= 0x08000000,
+	HALT_BROM_ON_TO_SRAM_ON		= 0x00800000,
+	HALT_SRAM_ON_TO_BROM_OFF	= 0x00400000,
 };
 
 // Flags for book-keeping
 enum state {
 	STATE_INITED		= 0x8000000000000000,
-	STATE_BROM_UNMAPPED	= 0x4000000000000000,
-	STATE_SRAM_MIRRORED	= 0x2000000000000000,
+	STATE_BROM_MAP_ON	= 0x4000000000000000,
+	STATE_SRAM_MIRROR_ON	= 0x2000000000000000,
 
 	STATE_BOOT0		= 0x0800000000000000,
 	STATE_BOOT1		= 0x0400000000000000,
@@ -70,6 +70,11 @@ typedef struct iomem
 	u8       nand[0x00000400]; // 1K, 0x0d010000
 	u8        aes[0x00000400]; // 1K, 0x0d020000
 	u8        sha[0x00000400]; // 1K, 0x0d030000
+
+	u8       ehci[0x00000400]; // 1K, 0x0d040000
+	u8      ohci0[0x00000400]; // 1K, 0x0d050000
+	u8      ohci1[0x00000400]; // 1K, 0x0d060000
+
 	u8	 hlwd[0x00000400]; // 1K, 0x0d800000
 	u8	  exi[0x00000400]; // 1K, 0x0d806000
 	u8    mem_unk[0x00000400]; // 1K, 0x0d8b0000
@@ -100,8 +105,8 @@ typedef struct starlet
 	// Emulator state
 
 	uc_engine *uc;		// Pointer to an instance of Unicorn
-	u32 timer_pad;		
 	u32 timer;		// Hollywood timer
+	uc_hook halt_hook;
 	u64 timeout;		// Emulation timeout, in seconds
 	u64 halt_code;		// Reason for emulator halt
 	u64 state;		// State bitfield

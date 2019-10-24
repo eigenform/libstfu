@@ -27,13 +27,16 @@ static int __init_mmu(starlet *e)
 	// Main memory
 	uc_mem_map_ptr(e->uc, 0x00000000, 0x01800000, 7, e->mram.mem1);
 	uc_mem_map_ptr(e->uc, 0x10000000, 0x04000000, 7, e->mram.mem2);
-	//uc_mem_map(e->uc, 0x00000000, 0x01800000, 7);
-	//uc_mem_map(e->uc, 0x10000000, 0x04000000, 7);
 
 	// MMIOs
 	uc_mem_map_ptr(e->uc, 0x0d010000, 0x00000400, 7, e->iomem.nand);
 	uc_mem_map_ptr(e->uc, 0x0d020000, 0x00000400, 7, e->iomem.aes);
 	uc_mem_map_ptr(e->uc, 0x0d030000, 0x00000400, 7, e->iomem.sha);
+
+	uc_mem_map_ptr(e->uc, 0x0d040000, 0x00000400, 7, e->iomem.ehci);
+	uc_mem_map_ptr(e->uc, 0x0d050000, 0x00000400, 7, e->iomem.ohci0);
+	uc_mem_map_ptr(e->uc, 0x0d060000, 0x00000400, 7, e->iomem.ohci1);
+
 
 	uc_mem_map_ptr(e->uc, 0x0d806000, 0x00000400, 7, e->iomem.exi);
 	uc_mem_map_ptr(e->uc, 0x0d800000, 0x00000400, 7, e->iomem.hlwd);
@@ -49,6 +52,42 @@ static int __init_mmu(starlet *e)
 	uc_mem_map_ptr(e->uc, 0x0d410000, 0x00010000, 7, e->sram.bank_b);
 	return 0;
 }
+
+// __enable_sram_mirror()
+// Enable the SRAM mirror.
+static void __enable_sram_mirror(starlet *e)
+{
+	uc_mem_unmap(e->uc, 0xfff00000, 0x00020000);
+	uc_mem_unmap(e->uc, 0x0d400000, 0x00020000);
+	uc_mem_unmap(e->uc, 0xffff0000, 0x00010000);
+	uc_mem_unmap(e->uc, 0xfffe0000, 0x00010000);
+
+	uc_mem_map_ptr(e->uc, 0xfff00000, 0x00010000, 7, e->sram.bank_b);
+	uc_mem_map_ptr(e->uc, 0x0d400000, 0x00010000, 7, e->sram.bank_b);
+	uc_mem_map_ptr(e->uc, 0xfff10000, 0x00010000, 7, e->sram.bank_a);
+	uc_mem_map_ptr(e->uc, 0x0d410000, 0x00010000, 7, e->sram.bank_a);
+	uc_mem_map_ptr(e->uc, 0xfffe0000, 0x00010000, 7, e->sram.bank_b);
+	uc_mem_map_ptr(e->uc, 0xffff0000, 0x00010000, 7, e->sram.bank_a);
+}
+
+// __disable_brom_mapping()
+// Disable the boot ROM mapping.
+static void __disable_brom_mapping(starlet *e)
+{
+	uc_mem_unmap(e->uc, 0xfff00000, 0x00020000);
+	uc_mem_unmap(e->uc, 0x0d400000, 0x00020000);
+	uc_mem_unmap(e->uc, 0xffff0000, 0x00010000);
+	uc_mem_unmap(e->uc, 0xfffe0000, 0x00010000);
+
+	uc_mem_map_ptr(e->uc, 0xfff00000, 0x00010000, 7, e->sram.bank_b);
+	uc_mem_map_ptr(e->uc, 0x0d400000, 0x00010000, 7, e->sram.bank_b);
+	uc_mem_map_ptr(e->uc, 0xfff10000, 0x00010000, 7, e->sram.bank_a);
+	uc_mem_map_ptr(e->uc, 0x0d410000, 0x00010000, 7, e->sram.bank_a);
+	uc_mem_map_ptr(e->uc, 0xfffe0000, 0x00010000, 7, e->sram.bank_b);
+	uc_mem_map_ptr(e->uc, 0xffff0000, 0x00010000, 7, e->sram.bank_a);
+
+}
+
 
 // __destroy_mmu()
 // Free any backing memory we allocated.
@@ -83,13 +122,14 @@ static void __hook_simple_bp(uc_engine *uc, u64 addr, u32 size, starlet *emu)
 	uc_emu_stop(uc);
 }
 
-// __hook_block()
-// Basic block hook
-static void __hook_block(uc_engine *uc, u64 addr, u32 size, starlet *emu)
+// __hook_halt()
+// Internal hook to force halt emulation.
+void __hook_halt(uc_engine *uc, u64 addr, u32 size, starlet *emu)
 { 
-	u32 val;
-	uc_reg_read(uc, UC_ARM_REG_PC, &val);
-	dbg("PC=%08x\n", val);
+	u32 pc;
+	uc_reg_read(uc, UC_ARM_REG_PC, &pc);
+	dbg("Halted at PC=%08x\n", pc);
+	uc_emu_stop(uc);
 }
 
 // __hook_enter_boot1()
@@ -130,9 +170,6 @@ static int __register_hooks(starlet *e)
 			0xfff00000, 0xfff00000);
 	uc_hook_add(e->uc, &x,UC_HOOK_CODE,__hook_enter_boot2, e,
 			0xffff0000, 0xffff0000);
-
-	//uc_hook_add(e->uc, &x,UC_HOOK_BLOCK,__hook_block, NULL,1,0);
-
 	register_mmio_hooks(e);
 }
 
@@ -164,7 +201,7 @@ int starlet_init(starlet *emu)
 		return -1;
 	}
 
-	// Configure initial memory mappings
+	emu->state = (STATE_BROM_MAP_ON);
 	__init_mmu(emu);
 	__register_hooks(emu);
 	dbg("%s\n", "initialized instance");
@@ -178,6 +215,39 @@ int starlet_halt(starlet *emu, u32 why)
 	uc_emu_stop(emu->uc);
 }
 
+// __handle_halt_code()
+// Deal with halt codes, which either (a) indicate a Unicorn exception, or (b)
+// are used to implement some other feature that requires halting emulation.
+static bool __handle_halt_code(starlet *e)
+{
+	u32 pc, cpsr;
+
+	// Halt codes < 0x10000 indicate that we need to exit the main loop
+	if (e->halt_code < 0x10000)
+	{
+		uc_reg_read(e->uc, UC_ARM_REG_PC, &pc);
+		dbg("Died with halt_code=%08x, pc=%08x\n", e->halt_code, pc);
+		return true;
+	}
+
+	// Otherwise, we halted in order to do something more complicated
+	switch (e->halt_code) {
+
+	// We use the internal halt hook to halt in order to address these
+	case HALT_BROM_ON_TO_SRAM_ON:
+		dbg("%s\n", "Enabling the SRAM mirror ...");
+		__enable_sram_mirror(e);
+		uc_hook_del(e->uc, e->halt_hook);
+		break;
+	case HALT_SRAM_ON_TO_BROM_OFF:
+		dbg("%s\n", "Disabling BROM mapping ...");
+		__disable_brom_mapping(e);
+		uc_hook_del(e->uc, e->halt_hook);
+		break;
+	}
+	return false;
+}
+
 // starlet_run()
 // Start running a Starlet instance. The main loop is implemented here.
 #define LOOP_INSTRS 0x100
@@ -187,6 +257,7 @@ int starlet_run(starlet *emu)
 	u32 pc, cpsr;
 	u32 temp;
 	u64 err_code;
+	bool should_halt;
 
 	// Set the initial entrypoint
 	uc_reg_write(emu->uc, UC_ARM_REG_PC, &emu->entrypoint);
@@ -197,16 +268,18 @@ int starlet_run(starlet *emu)
 	{
 		// The PC we read from Unicorn does not encode THUMB state.
 		// If the processor is in THUMB mode, fix the program counter.
+		// Then, start emulation.
 
 		uc_reg_read(emu->uc, UC_ARM_REG_PC, &pc);
 		uc_reg_read(emu->uc, UC_ARM_REG_CPSR, &cpsr);
+		dbg("CPSR=%08x\n", cpsr);
+
 		if (cpsr & 0x20) pc |= 1;
+		uc_reg_write(emu->uc, UC_ARM_REG_PC, &pc);
+		dbg("Resuming at PC=%08x\n", pc);
 
-		log("pc=%08x\n", pc);
+		// Start emulating - pass Unicorn exception flags to halt_code
 		err = uc_emu_start(emu->uc, pc, 0, 0, 0);
-		log("%s\n", "halted");
-
-		// If there is a Unicorn exception, pass the UC_ERR_ value
 		switch (err) {
 		case UC_ERR_OK: 
 			break;
@@ -215,17 +288,16 @@ int starlet_run(starlet *emu)
 			break;
 		}
 
-		// If the halt type indicates we should *actually* halt
-		if ((emu->halt_code != 0) && (emu->halt_code <= 0x10000))
+		// If the halt code is non-zero, deal with it here.
+		// If __handle_halt_code returns true, stop the main loop.
+		if (emu->halt_code != 0)
 		{
-			uc_reg_read(emu->uc, UC_ARM_REG_PC, &pc);
-			dbg("Died with halt_code=%08x, pc=%08x\n", 
-				emu->halt_code, pc);
-			break;
+			should_halt = __handle_halt_code(emu);
+			emu->halt_code = 0;
+			if (should_halt) break;
 		}
 	}
 }
-
 
 
 // starlet_load_code()
