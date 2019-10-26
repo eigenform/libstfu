@@ -24,17 +24,21 @@ typedef int64_t s64;
 
 enum halt_codes {
 
-	// Halt codes < 0x10000 break out of the main loop
-	HALT_NONE			= 0x00000000,
-	HALT_EXCEPTION			= 0x00004000,
-	HALT_BP				= 0x00008000,
-	
-	// These are the "non-halting" halt codes
-	
-	HALT_BLOCK_HOOK_DONE		= 0x00080000,
+	HALT_INTERRUPT			= 0x80000000,
+	HALT_INSN_INVALID		= 0x40000000,
+
 
 	HALT_BROM_ON_TO_SRAM_ON		= 0x00800000,
 	HALT_SRAM_ON_TO_BROM_OFF	= 0x00400000,
+	//HALT_xxxx			= 0x00200000,
+	//HALT_xxxx			= 0x00100000,
+
+	HALT_BLOCK_HOOK_DONE		= 0x00080000,
+
+	// Halt codes < 0x10000 break out of the main loop
+	HALT_BP				= 0x00008000,
+	HALT_EXCEPTION			= 0x00004000,
+	HALT_NONE			= 0x00000000,
 };
 
 // Flags for book-keeping
@@ -106,6 +110,9 @@ typedef struct starlet
 
 	uc_engine *uc;		// Pointer to an instance of Unicorn
 	u32 timer;		// Hollywood timer
+	u32 interrupt;
+
+
 	uc_hook halt_hook;
 	u64 timeout;		// Emulation timeout, in seconds
 	u64 halt_code;		// Reason for emulator halt

@@ -13,17 +13,20 @@ A summary of our goals is roughly:
 - Have a readable codebase that actually behaves like the platform
 - Provide some tools for debugging/analyzing code running on the platform
 
-Linking against Unicorn allows us to [mostly] ignore details about actually 
-emulating a CPU, and instead focus on properly emulating things that are 
-particular to the platform. The implementation of various I/O features is 
-guided by marcan's [and other Team Twiizers members'] implementation of 
-various things in [skyeye-starlet](https://github.com/marcan/skyeye-starlet). 
-This project will probably be _even hackier_ than `skyeye-starlet` for a long 
+Linking against Unicorn allows us to [mostly] ignore details about actually
+emulating a CPU, and instead focus on properly emulating things that are
+particular to the platform. The implementation of various I/O features is
+guided by marcan's [and other Team Twiizers members'] implementation of
+various things in [skyeye-starlet](https://github.com/marcan/skyeye-starlet).
+This project will probably be _even hackier_ than `skyeye-starlet` for a long
 time.
 
 ## Building
-Move into the project root and run `make`. This will build the libraries and
-some test binaries.
+You will probably need to build [Unicorn](https://github.com/unicorn-engine/unicorn)
+from source in order to deal with this.
+
+Move into the project root and run `make`.
+This will build the libraries and some test binaries.
 
 I'm not interested in supported platforms other than Linux.
 

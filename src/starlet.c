@@ -37,7 +37,6 @@ static int __init_mmu(starlet *e)
 	uc_mem_map_ptr(e->uc, 0x0d050000, 0x00000400, 7, e->iomem.ohci0);
 	uc_mem_map_ptr(e->uc, 0x0d060000, 0x00000400, 7, e->iomem.ohci1);
 
-
 	uc_mem_map_ptr(e->uc, 0x0d806000, 0x00000400, 7, e->iomem.exi);
 	uc_mem_map_ptr(e->uc, 0x0d800000, 0x00000400, 7, e->iomem.hlwd);
 	uc_mem_map_ptr(e->uc, 0x0d8b0000, 0x00000400, 7, e->iomem.mem_unk);
@@ -98,16 +97,24 @@ static int __destroy_mmu(starlet *emu) { return 0; }
 static bool __hook_unmapped(uc_engine *uc, uc_mem_type type,
 	u64 address, int size, s64 value, void *user_data)
 {
+	// FIXME: Returning 'true' here is a hack in order to step around the
+	// fact the Unicorn cannot distinguish between invalid physical regions
+	// and potentially valid virtual mappings setup in the 'real' ARM MMU.
+	//
+	// This probably implies that the Unicorn softmmu needs a little bit
+	// of restructuring in order for hooks to account for accesses that
+	// will later be translated by ARM MMU
+
 	switch(type){
 	case UC_MEM_WRITE_UNMAPPED:
 		printf("Unmapped write on %08x\n", address);
-		return false;
+		return true;
 	case UC_MEM_READ_UNMAPPED:
 		printf("Unmapped read on %08x\n", address);
-		return false;
+		return true;
 	case UC_MEM_FETCH_UNMAPPED:
 		printf("Unmapped fetch on %08x\n", address);
-		return false;
+		return true;
 	}
 	return false;
 }
@@ -116,7 +123,7 @@ static bool __hook_unmapped(uc_engine *uc, uc_mem_type type,
 // __hook_simple_bp()
 // Simple breakpoint hook
 static void __hook_simple_bp(uc_engine *uc, u64 addr, u32 size, starlet *emu)
-{ 
+{
 	emu->halt_code = HALT_BP;
 	dbg("%s\n", "Hit breakpoint\n");
 	uc_emu_stop(uc);
@@ -125,16 +132,40 @@ static void __hook_simple_bp(uc_engine *uc, u64 addr, u32 size, starlet *emu)
 // __hook_halt()
 // Internal hook to force halt emulation.
 void __hook_halt(uc_engine *uc, u64 addr, u32 size, starlet *emu)
-{ 
+{
 	u32 pc;
 	uc_reg_read(uc, UC_ARM_REG_PC, &pc);
 	dbg("Halted at PC=%08x\n", pc);
 	uc_emu_stop(uc);
 }
 
+
+// __hook_intr()
+// Interrupt-handling (UC_HOOK_INTR) hook
+static void __hook_intr(uc_engine *uc, uint32_t intno, starlet *e)
+{
+	u32 pc;
+	uc_reg_read(uc, UC_ARM_REG_PC, &pc);
+	e->halt_code = HALT_INTERRUPT;
+	e->interrupt = intno;
+	uc_emu_stop(uc);
+}
+
+
+// __hook_insn_invalid()
+// Hook triggered on UC_HOOK_INSN_INVALID (invalid instruction)
+static bool __hook_insn_invalid(uc_engine *uc, starlet *e)
+{
+	e->halt_code = HALT_INSN_INVALID;
+	uc_emu_stop(uc);
+	return true;
+}
+
+
 // __hook_enter_boot1()
+// Simple hook to keep track of boot1 state
 static void __hook_enter_boot1(uc_engine *uc, u64 addr, u32 size, starlet *emu)
-{ 
+{
 	u32 val;
 	uc_reg_read(uc, UC_ARM_REG_PC, &val);
 	if (emu->state & STATE_BOOT0)
@@ -146,8 +177,9 @@ static void __hook_enter_boot1(uc_engine *uc, u64 addr, u32 size, starlet *emu)
 }
 
 // __hook_enter_boot2()
+// Simple hook to keep track of boot2 state
 static void __hook_enter_boot2(uc_engine *uc, u64 addr, u32 size, starlet *emu)
-{ 
+{
 	u32 val;
 	uc_reg_read(uc, UC_ARM_REG_PC, &val);
 	if (emu->state & STATE_BOOT1)
@@ -164,8 +196,9 @@ static void __hook_enter_boot2(uc_engine *uc, u64 addr, u32 size, starlet *emu)
 static int __register_hooks(starlet *e)
 {
 	uc_hook x, y, z;
-	uc_hook_add(e->uc, &x,UC_HOOK_MEM_UNMAPPED,__hook_unmapped, NULL,1,0);
-
+	uc_hook_add(e->uc, &x,UC_HOOK_MEM_UNMAPPED,__hook_unmapped, e, 1, 0);
+	uc_hook_add(e->uc, &x,UC_HOOK_INTR, __hook_intr, e, 1, 0);
+	uc_hook_add(e->uc, &x,UC_HOOK_INSN_INVALID, __hook_insn_invalid,e,1,0);
 	uc_hook_add(e->uc, &x,UC_HOOK_CODE,__hook_enter_boot1, e,
 			0xfff00000, 0xfff00000);
 	uc_hook_add(e->uc, &x,UC_HOOK_CODE,__hook_enter_boot2, e,
@@ -181,9 +214,9 @@ static int __register_hooks(starlet *e)
 // starlet_destroy()
 // Destroy a Starlet instance.
 void starlet_destroy(starlet *emu)
-{ 
+{
 	dbg("%s\n", "destroying instance ...");
-	uc_close(emu->uc); 
+	uc_close(emu->uc);
 	__destroy_mmu(emu);
 	if (emu->nand.data)
 		free(emu->nand.data);
@@ -191,10 +224,12 @@ void starlet_destroy(starlet *emu)
 
 // starlet_init()
 // Initialize a new starlet instance.
+//#define UC_MODE_ARM926 128
+#define UC_STARLET_MODE	(UC_MODE_ARM|UC_MODE_BIG_ENDIAN|UC_MODE_ARM926)
 int starlet_init(starlet *emu)
 {
 	uc_err err;
-	err = uc_open(UC_ARCH_ARM, UC_MODE_ARM | UC_MODE_BIG_ENDIAN, &emu->uc);
+	err = uc_open(UC_ARCH_ARM, UC_STARLET_MODE, &emu->uc);
 	if (err)
 	{
 		printf("Couldn't create Unicorn instance\n");
@@ -218,20 +253,78 @@ int starlet_halt(starlet *emu, u32 why)
 // __handle_halt_code()
 // Deal with halt codes, which either (a) indicate a Unicorn exception, or (b)
 // are used to implement some other feature that requires halting emulation.
+static u8 stack_buf[0x100];
+
+static char tmp_buf[0x10];
+static char svc_buf[0x1000];
+static u32 svc_buf_cur;
 static bool __handle_halt_code(starlet *e)
 {
-	u32 pc, cpsr;
+	u32 r0, r1, r2, r3, r4, r5, pc, lr, sp, cpsr, tmp;
+	size_t slen;
 
 	// Halt codes < 0x10000 indicate that we need to exit the main loop
 	if (e->halt_code < 0x10000)
 	{
 		uc_reg_read(e->uc, UC_ARM_REG_PC, &pc);
-		dbg("Died with halt_code=%08x, pc=%08x\n", e->halt_code, pc);
+		uc_reg_read(e->uc, UC_ARM_REG_LR, &lr);
+		dbg("Died with halt_code=%08x, pc=%08x, lr=%08x\n",
+			e->halt_code, pc, lr);
 		return true;
 	}
 
 	// Otherwise, we halted in order to do something more complicated
 	switch (e->halt_code) {
+
+	case HALT_INSN_INVALID:
+		uc_reg_read(e->uc, UC_ARM_REG_PC, &pc);
+		tmp = read32(e->uc, pc);
+		dbg("Got bad instruction %08x at PC=%08x\n", tmp, pc);
+		return true;
+		break;
+
+	// Interrupt handling
+	case HALT_INTERRUPT:
+		uc_reg_read(e->uc, UC_ARM_REG_PC, &pc);
+		uc_reg_read(e->uc, UC_ARM_REG_PC, &sp);
+		uc_reg_read(e->uc, UC_ARM_REG_CPSR, &cpsr);
+		uc_reg_read(e->uc, UC_ARM_REG_R0, &r0);
+		uc_reg_read(e->uc, UC_ARM_REG_R1, &r1);
+		uc_reg_read(e->uc, UC_ARM_REG_R2, &r2);
+		uc_reg_read(e->uc, UC_ARM_REG_R3, &r3);
+		uc_reg_read(e->uc, UC_ARM_REG_R4, &r4);
+		uc_reg_read(e->uc, UC_ARM_REG_R5, &r5);
+
+		// Handle semi-hosting SVC calls (SWI - software interrupts)
+		if (e->interrupt == 2)
+		{
+			uc_mem_read(e->uc, r1, &tmp_buf, 0x10);
+			slen = strnlen(tmp_buf, 0x0f);
+			strncpy(&svc_buf[svc_buf_cur], tmp_buf, slen);
+			svc_buf_cur += slen;
+			for (int i = 0; i < slen; i++)
+			{
+				if (tmp_buf[i] == '\n')
+				{
+					log("SVC: %s", svc_buf);
+					memset(svc_buf, 0, sizeof(svc_buf));
+					svc_buf_cur = 0;
+					break;
+				}
+			}
+
+			//hexdump("r1", tmp_buf, 0x10);
+			return false;
+		}
+		else
+		{
+			dbg("Caught interrupt %08x at PC=%08x\n", e->interrupt, pc);
+			dbg("lr=%08x, sp=%08x, cpsr=%08x\n,", lr, sp, cpsr);
+			dbg("r0=%08x, r1=%08x, r2=%08x, r3=%08x, r4=%08x, r5=%08x\n",
+				r0, r1, r2, r3, r4, r5);
+			return false;
+		}
+		break;
 
 	// We use the internal halt hook to halt in order to address these
 	case HALT_BROM_ON_TO_SRAM_ON:
@@ -272,16 +365,13 @@ int starlet_run(starlet *emu)
 
 		uc_reg_read(emu->uc, UC_ARM_REG_PC, &pc);
 		uc_reg_read(emu->uc, UC_ARM_REG_CPSR, &cpsr);
-		dbg("CPSR=%08x\n", cpsr);
-
 		if (cpsr & 0x20) pc |= 1;
 		uc_reg_write(emu->uc, UC_ARM_REG_PC, &pc);
-		dbg("Resuming at PC=%08x\n", pc);
 
 		// Start emulating - pass Unicorn exception flags to halt_code
 		err = uc_emu_start(emu->uc, pc, 0, 0, 0);
 		switch (err) {
-		case UC_ERR_OK: 
+		case UC_ERR_OK:
 			break;
 		default:
 			emu->halt_code = err;
@@ -302,7 +392,7 @@ int starlet_run(starlet *emu)
 
 // starlet_load_code()
 // Read a file with some code into memory, then write it into the emulator
-// at the requested memory address. 
+// at the requested memory address.
 // This sets the Starlet entrypoint to the provided address.
 int starlet_load_code(starlet *emu, char *filename, u64 addr)
 {
@@ -311,7 +401,7 @@ int starlet_load_code(starlet *emu, char *filename, u64 addr)
 	uc_err err;
 
 	// Die if we can't get the filesize
-	size_t filesize = get_filesize(filename); 
+	size_t filesize = get_filesize(filename);
 	if (filesize == -1)
 	{
 		printf("Couldn't open %s\n", filename);
@@ -352,7 +442,7 @@ int starlet_load_boot0(starlet *emu, char *filename)
 	uc_err err;
 
 	// Die if we can't get the filesize
-	size_t filesize = get_filesize(filename); 
+	size_t filesize = get_filesize(filename);
 	if (filesize == -1)
 	{
 		printf("Couldn't open %s\n", filename);
@@ -414,7 +504,7 @@ int starlet_load_otp(starlet *e, char *filename)
 	size_t bytes_read;
 	uc_err err;
 
-	size_t filesize = get_filesize(filename); 
+	size_t filesize = get_filesize(filename);
 	if (filesize == -1)
 	{
 		printf("Couldn't open %s\n", filename);
