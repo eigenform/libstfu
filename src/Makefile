@@ -16,5 +16,5 @@ $(STATIC): $(OBJ)
 $(SHARED):
 	gcc -shared $(CFLAGS) *.c -o $@
 clean:
-	rm -fv $(SHARED) $(STATIC)
+	rm -fv $(SHARED) $(STATIC) *.o
 .PHONY: all clean

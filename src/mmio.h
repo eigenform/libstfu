@@ -4,16 +4,6 @@
 #include "core_types.h"
 
 
-//typedef struct nand_interface
-//{
-//
-//} aes_interface;
-
-//typedef struct nand_interface
-//{
-//
-//} sha_interface;
-
 int register_mmio_hooks(starlet *e);
 
 

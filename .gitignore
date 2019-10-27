@@ -8,6 +8,8 @@
 !src/ecc.c
 !src/ecc.h
 !src/hollywood.h
+!src/ios.c
+!src/ios.h
 !src/mmio.c
 !src/mmio.h
 !src/sha1.c

@@ -26,7 +26,6 @@ int main(void)
 	starlet_load_nand_buffer(&emu, nand_data, nand_size);
 	free(nand_data);
 
-
 	// Load boot ROM and OTP
 	starlet_load_boot0(&emu, "boot0.bin");
 	starlet_load_otp(&emu, "otp.bin");

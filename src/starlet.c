@@ -9,6 +9,7 @@
 #include "core_types.h"
 #include "starlet.h"
 #include "util.h"
+#include "ios.h"
 
 #ifndef LOGGING
 #define LOGGING 1
@@ -27,6 +28,9 @@ static int __init_mmu(starlet *e)
 	// Main memory
 	uc_mem_map_ptr(e->uc, 0x00000000, 0x01800000, 7, e->mram.mem1);
 	uc_mem_map_ptr(e->uc, 0x10000000, 0x04000000, 7, e->mram.mem2);
+
+	// Fake mapping (this physical memory doesn't technically exist)
+	//uc_mem_map(e->uc, 0x20000000, 0x04000000, 7);
 
 	// MMIOs
 	uc_mem_map_ptr(e->uc, 0x0d010000, 0x00000400, 7, e->iomem.nand);
@@ -87,7 +91,6 @@ static void __disable_brom_mapping(starlet *e)
 
 }
 
-
 // __destroy_mmu()
 // Free any backing memory we allocated.
 static int __destroy_mmu(starlet *emu) { return 0; }
@@ -103,17 +106,32 @@ static bool __hook_unmapped(uc_engine *uc, uc_mem_type type,
 	//
 	// This probably implies that the Unicorn softmmu needs a little bit
 	// of restructuring in order for hooks to account for accesses that
-	// will later be translated by ARM MMU
+	// will later be translated by ARM MMU?
+	//
+	// You can simply return 'true' from this (for cases where there are
+	// actually virtual addresses), and things should resume as usual.
 
 	switch(type){
 	case UC_MEM_WRITE_UNMAPPED:
-		printf("Unmapped write on %08x\n", address);
+		if (address >0x30000000)
+		{
+			printf("Unmapped write on %08x\n", address);
+			return false;
+		}
 		return true;
 	case UC_MEM_READ_UNMAPPED:
-		printf("Unmapped read on %08x\n", address);
+		if (address >0x30000000)
+		{
+			printf("Unmapped write on %08x\n", address);
+			return false;
+		}
 		return true;
 	case UC_MEM_FETCH_UNMAPPED:
-		printf("Unmapped fetch on %08x\n", address);
+		if (address >0x30000000)
+		{
+			printf("Unmapped write on %08x\n", address);
+			return false;
+		}
 		return true;
 	}
 	return false;
@@ -129,16 +147,53 @@ static void __hook_simple_bp(uc_engine *uc, u64 addr, u32 size, starlet *emu)
 	uc_emu_stop(uc);
 }
 
+// __hook_log_code
+// For internal debugging - log every instruction
+static void __hook_log_code(uc_engine *uc, u64 addr, u32 size, starlet *emu)
+{
+	u32 pc, lr, sp, cpsr, instr;
+	u32 r[13];
+	bool thumb;
+
+	uc_reg_read(uc, UC_ARM_REG_PC, &pc);
+	uc_reg_read(uc, UC_ARM_REG_LR, &lr);
+	uc_reg_read(uc, UC_ARM_REG_SP, &sp);
+	uc_reg_read(uc, UC_ARM_REG_CPSR, &cpsr);
+	uc_reg_read(uc, UC_ARM_REG_R0, &r[0]);
+	uc_reg_read(uc, UC_ARM_REG_R1, &r[1]);
+	uc_reg_read(uc, UC_ARM_REG_R2, &r[2]);
+	uc_reg_read(uc, UC_ARM_REG_R3, &r[3]);
+	uc_reg_read(uc, UC_ARM_REG_R4, &r[4]);
+	uc_reg_read(uc, UC_ARM_REG_R5, &r[5]);
+	uc_reg_read(uc, UC_ARM_REG_R6, &r[6]);
+	uc_reg_read(uc, UC_ARM_REG_R7, &r[7]);
+	uc_reg_read(uc, UC_ARM_REG_R8, &r[8]);
+	uc_reg_read(uc, UC_ARM_REG_R9, &r[9]);
+	uc_reg_read(uc, UC_ARM_REG_R10, &r[10]);
+	uc_reg_read(uc, UC_ARM_REG_R11, &r[11]);
+	uc_reg_read(uc, UC_ARM_REG_R12, &r[12]);
+
+	instr = vread32(uc, pc);
+	log("%08x: %08x\t [lr=%08x,sp=%08x,cpsr=%08x,r0=%08x,r1=%08x,r2=%08x,r3=%08x,r4=%08x,r5=%08x,r6=%08x,r7=%08x,r8=%08x,r9=%08x,r10=%08x,r11=%08x]\n",
+			pc,instr,lr,sp,cpsr,r[0],r[1], r[2],r[3],r[4],r[5],r[6], r[7],r[8],r[9],r[10],r[11]);
+}
+
 // __hook_halt()
 // Internal hook to force halt emulation.
 void __hook_halt(uc_engine *uc, u64 addr, u32 size, starlet *emu)
 {
 	u32 pc;
 	uc_reg_read(uc, UC_ARM_REG_PC, &pc);
-	dbg("Halted at PC=%08x\n", pc);
 	uc_emu_stop(uc);
 }
 
+// __hook_syscall_fixup()
+// Hook to-be-scheduled after we take an 'undef' exception.
+void __hook_syscall_fixup(uc_engine *uc, u64 addr, u32 size, starlet *emu)
+{
+	emu->halt_code = HALT_SYSCALL_FIXUP;
+	uc_emu_stop(uc);
+}
 
 // __hook_intr()
 // Interrupt-handling (UC_HOOK_INTR) hook
@@ -203,8 +258,228 @@ static int __register_hooks(starlet *e)
 			0xfff00000, 0xfff00000);
 	uc_hook_add(e->uc, &x,UC_HOOK_CODE,__hook_enter_boot2, e,
 			0xffff0000, 0xffff0000);
+
+
+	// Syscall handler log
+	//uc_hook_add(e->uc, &x,UC_HOOK_CODE,__hook_log_code, e,
+	//		0xffff1d64, 0xffff1e30);
+
+	//uc_hook_add(e->uc, &x,UC_HOOK_CODE,__hook_log_code, e,
+	//		0x2010a1f8, 0x2010a1fc);
+
+	//uc_hook_add(e->uc, &x,UC_HOOK_CODE,__hook_log_code, e,
+	//		0x20100000, 0x2010b148);
+
+	//uc_hook_add(e->uc, &x,UC_HOOK_CODE,__hook_log_code, e, 
+	//		0x13000000, 0x14000000);
+
+	//uc_hook_add(e->uc, &x,UC_HOOK_CODE,__hook_log_code, e, 
+	//		0xffff0000, 0xffff9000);
+
+
 	register_mmio_hooks(e);
 }
+
+
+// __handle_interrupt()
+// Deals with some pending interrupt.
+// Return 'true' if the interrupt is fatal (should halt the main loop).
+static char tmp_buf[0x10];
+static char svc_buf[0x1000];
+static u32 svc_buf_cur;
+static bool __handle_interrupt(starlet *e)
+{
+	u32 r0, r1, r2, r3, r4, r5, pc, lr, sp, cpsr, spsr, tmp;
+	size_t slen;
+
+	switch (e->interrupt) {
+
+	// Handle SWI (semihosting SVC calls)
+	case 2:
+		uc_reg_read(e->uc, UC_ARM_REG_PC, &pc);
+		uc_reg_read(e->uc, UC_ARM_REG_R1, &r1);
+
+		uc_virtual_mem_read(e->uc, r1, &tmp_buf, 0x10);
+		//uc_mem_read(e->uc, r1, &tmp_buf, 0x10);
+		slen = strnlen(tmp_buf, 0x0f);
+		strncpy(&svc_buf[svc_buf_cur], tmp_buf, slen);
+		svc_buf_cur += slen;
+		for (int i = 0; i < slen; i++)
+		{
+			if (tmp_buf[i] == '\n')
+			{
+				log("%s", svc_buf);
+				memset(svc_buf, 0, sizeof(svc_buf));
+				svc_buf_cur = 0;
+				break;
+			}
+		}
+		return false;
+		break;
+
+	// Unhandled (unimplemented) interrupts
+	default:
+		uc_reg_read(e->uc, UC_ARM_REG_PC, &pc);
+		uc_reg_read(e->uc, UC_ARM_REG_PC, &sp);
+		uc_reg_read(e->uc, UC_ARM_REG_CPSR, &cpsr);
+		uc_reg_read(e->uc, UC_ARM_REG_SPSR, &spsr);
+		uc_reg_read(e->uc, UC_ARM_REG_R0, &r0);
+		uc_reg_read(e->uc, UC_ARM_REG_R1, &r1);
+		uc_reg_read(e->uc, UC_ARM_REG_R2, &r2);
+		uc_reg_read(e->uc, UC_ARM_REG_R3, &r3);
+		uc_reg_read(e->uc, UC_ARM_REG_R4, &r4);
+		uc_reg_read(e->uc, UC_ARM_REG_R5, &r5);
+
+		dbg("Interrupt %08x at PC=%08x\n", e->interrupt, pc);
+		dbg("lr=%08x, sp=%08x, cpsr=%08x, spsr=%08x\n", 
+				lr, sp, cpsr, spsr);
+		dbg("r0=%08x,r1=%08x,r2=%08x,r3=%08x,r4=%08x,r5=%08x\n",
+			r0, r1, r2, r3, r4, r5);
+		return true;
+	}
+}
+
+
+
+// __handle_syscall()
+// Handle an IOS syscall.
+// Returns 'true' if we need to fatally halt in the main loop.
+static u32 fixup_cpsr;
+static u32 fixup_hooks[0x1000];
+static u32 fixup_hook_idx;
+static bool __handle_syscall(starlet *e)
+{
+	u32 regs[7];
+	u32 instr, sc_num;
+	u32 entry_pc, entry_lr, entry_cpsr, entry_sp, entry_spsr;
+	u32 undef_pc, undef_lr, undef_cpsr, undef_sp, undef_spsr;
+
+	// Get the state before taking the exception
+	uc_reg_read(e->uc, UC_ARM_REG_PC, &entry_pc);
+	uc_reg_read(e->uc, UC_ARM_REG_SP, &entry_sp);
+	uc_reg_read(e->uc, UC_ARM_REG_LR, &entry_lr);
+	uc_reg_read(e->uc, UC_ARM_REG_CPSR, &entry_cpsr);
+	uc_reg_read(e->uc, UC_ARM_REG_SPSR, &entry_spsr);
+
+	// FIXME: Accuracy here is *always* entering the undef vector.
+	// If this instruction isn't a syscall, just signal a fatal halt
+	instr = vread32(e->uc, entry_pc);
+	if (!(instr & 0xe6000010))
+	{
+		dbg("Got bad instruction %08x at PC=%08x\n", instr, entry_pc);
+		return true;
+	}
+
+	// Try to log whatever thread of execution is on-CPU
+	log_context(entry_pc);
+
+	// Try to log the name of this syscall and arguments
+	sc_num = (instr & 0x00ffffe0) >> 5;
+	log_syscall(e, sc_num);
+
+	// Write new CPSR, switching into the undef system mode
+	undef_cpsr = (entry_cpsr & 0xffffffe0) | 0x1b;
+	undef_cpsr &= ~0x20; 
+	undef_cpsr |= 0x80;
+	uc_reg_write(e->uc, UC_ARM_REG_CPSR, &undef_cpsr);
+
+	// Save the old CPSR in SPSR_undef
+	uc_reg_write(e->uc, UC_ARM_REG_SPSR, &entry_cpsr);
+	fixup_cpsr = entry_cpsr;
+
+	// Treat undef instruction like a branch+link, put PC+4 in LR_undef
+	undef_lr = entry_pc + 4;
+	uc_reg_write(e->uc, UC_ARM_REG_LR, &undef_lr);
+
+	// This is not the best solution
+	bool need_hook = true;
+	for (int i = 0; i < fixup_hook_idx; i++)
+	{
+		if (undef_lr == fixup_hooks[i])
+		{
+			need_hook = false;
+			break;
+		}
+	}
+	if (need_hook)
+	{
+		uc_hook x;
+		uc_hook_add(e->uc, &x, UC_HOOK_CODE, __hook_syscall_fixup, e, 
+				undef_lr, undef_lr);
+		fixup_hooks[fixup_hook_idx] = undef_lr;
+		fixup_hook_idx++;
+		//dbg("Added syscall fixup hook at PC=%08x\n", undef_lr);
+	}
+
+	// Set PC to the undef vector, then resume execution!
+	undef_pc = 0xffff0004;
+	uc_reg_write(e->uc, UC_ARM_REG_PC, &undef_pc);
+	return false;
+}
+
+// __handle_halt_code()
+// Deal with halt codes, which either (a) indicate a Unicorn exception, or (b)
+// are used to implement some other feature that requires halting emulation.
+static bool __handle_halt_code(starlet *e)
+{
+	u32 lr, pc, cpsr, sp, r0;
+	bool die;
+
+	// These are fatal halt codes, meaning we must break in the main loop
+	if (e->halt_code < 0x10000)
+	{
+		uc_reg_read(e->uc, UC_ARM_REG_PC, &pc);
+		uc_reg_read(e->uc, UC_ARM_REG_LR, &lr);
+		dbg("halt_code=%08x, pc=%08x, lr=%08x\n", e->halt_code,pc,lr);
+		return true;
+	}
+
+	switch (e->halt_code) {
+
+	// Handle invalid instructions/taking exceptions for IOS syscalls
+	case HALT_INSN_INVALID:
+		die = __handle_syscall(e);
+		return die;
+		break;
+
+	// Handle returning from syscalls (restoring state)
+	case HALT_SYSCALL_FIXUP:
+
+		// Restore the old cpsr (before we took the exception)
+		uc_reg_write(e->uc, UC_ARM_REG_CPSR, &fixup_cpsr);
+
+		// FIXME: Just jump to the LR 
+		uc_reg_read(e->uc, UC_ARM_REG_LR, &lr);
+		uc_reg_write(e->uc, UC_ARM_REG_PC, &lr);
+
+		return false;
+		break;
+
+	// Handle an interrupt
+	case HALT_INTERRUPT:
+		die = __handle_interrupt(e);
+		return die;
+		break;
+
+	// Handle SRAM mirror enable (from BROM-enabled state)
+	case HALT_BROM_ON_TO_SRAM_ON:
+		log("%s\n", "HLWD SRAM mirror is enabled"); 
+		__enable_sram_mirror(e);
+		uc_hook_del(e->uc, e->halt_hook);
+		return false;
+		break;
+
+	// Handle BROM-disable (from SRAM-enabled state)
+	case HALT_SRAM_ON_TO_BROM_OFF:
+		log("%s\n", "HLWD BROM is unmapped"); 
+		__disable_brom_mapping(e);
+		uc_hook_del(e->uc, e->halt_hook);
+		return false;
+		break;
+	}
+	return true;
+}
+
 
 
 // ----------------------------------------------------------------------------
@@ -224,7 +499,6 @@ void starlet_destroy(starlet *emu)
 
 // starlet_init()
 // Initialize a new starlet instance.
-//#define UC_MODE_ARM926 128
 #define UC_STARLET_MODE	(UC_MODE_ARM|UC_MODE_BIG_ENDIAN|UC_MODE_ARM926)
 int starlet_init(starlet *emu)
 {
@@ -250,96 +524,6 @@ int starlet_halt(starlet *emu, u32 why)
 	uc_emu_stop(emu->uc);
 }
 
-// __handle_halt_code()
-// Deal with halt codes, which either (a) indicate a Unicorn exception, or (b)
-// are used to implement some other feature that requires halting emulation.
-static u8 stack_buf[0x100];
-
-static char tmp_buf[0x10];
-static char svc_buf[0x1000];
-static u32 svc_buf_cur;
-static bool __handle_halt_code(starlet *e)
-{
-	u32 r0, r1, r2, r3, r4, r5, pc, lr, sp, cpsr, tmp;
-	size_t slen;
-
-	// Halt codes < 0x10000 indicate that we need to exit the main loop
-	if (e->halt_code < 0x10000)
-	{
-		uc_reg_read(e->uc, UC_ARM_REG_PC, &pc);
-		uc_reg_read(e->uc, UC_ARM_REG_LR, &lr);
-		dbg("Died with halt_code=%08x, pc=%08x, lr=%08x\n",
-			e->halt_code, pc, lr);
-		return true;
-	}
-
-	// Otherwise, we halted in order to do something more complicated
-	switch (e->halt_code) {
-
-	case HALT_INSN_INVALID:
-		uc_reg_read(e->uc, UC_ARM_REG_PC, &pc);
-		tmp = read32(e->uc, pc);
-		dbg("Got bad instruction %08x at PC=%08x\n", tmp, pc);
-		return true;
-		break;
-
-	// Interrupt handling
-	case HALT_INTERRUPT:
-		uc_reg_read(e->uc, UC_ARM_REG_PC, &pc);
-		uc_reg_read(e->uc, UC_ARM_REG_PC, &sp);
-		uc_reg_read(e->uc, UC_ARM_REG_CPSR, &cpsr);
-		uc_reg_read(e->uc, UC_ARM_REG_R0, &r0);
-		uc_reg_read(e->uc, UC_ARM_REG_R1, &r1);
-		uc_reg_read(e->uc, UC_ARM_REG_R2, &r2);
-		uc_reg_read(e->uc, UC_ARM_REG_R3, &r3);
-		uc_reg_read(e->uc, UC_ARM_REG_R4, &r4);
-		uc_reg_read(e->uc, UC_ARM_REG_R5, &r5);
-
-		// Handle semi-hosting SVC calls (SWI - software interrupts)
-		if (e->interrupt == 2)
-		{
-			uc_mem_read(e->uc, r1, &tmp_buf, 0x10);
-			slen = strnlen(tmp_buf, 0x0f);
-			strncpy(&svc_buf[svc_buf_cur], tmp_buf, slen);
-			svc_buf_cur += slen;
-			for (int i = 0; i < slen; i++)
-			{
-				if (tmp_buf[i] == '\n')
-				{
-					log("SVC: %s", svc_buf);
-					memset(svc_buf, 0, sizeof(svc_buf));
-					svc_buf_cur = 0;
-					break;
-				}
-			}
-
-			//hexdump("r1", tmp_buf, 0x10);
-			return false;
-		}
-		else
-		{
-			dbg("Caught interrupt %08x at PC=%08x\n", e->interrupt, pc);
-			dbg("lr=%08x, sp=%08x, cpsr=%08x\n,", lr, sp, cpsr);
-			dbg("r0=%08x, r1=%08x, r2=%08x, r3=%08x, r4=%08x, r5=%08x\n",
-				r0, r1, r2, r3, r4, r5);
-			return false;
-		}
-		break;
-
-	// We use the internal halt hook to halt in order to address these
-	case HALT_BROM_ON_TO_SRAM_ON:
-		dbg("%s\n", "Enabling the SRAM mirror ...");
-		__enable_sram_mirror(e);
-		uc_hook_del(e->uc, e->halt_hook);
-		break;
-	case HALT_SRAM_ON_TO_BROM_OFF:
-		dbg("%s\n", "Disabling BROM mapping ...");
-		__disable_brom_mapping(e);
-		uc_hook_del(e->uc, e->halt_hook);
-		break;
-	}
-	return false;
-}
 
 // starlet_run()
 // Start running a Starlet instance. The main loop is implemented here.
@@ -369,17 +553,17 @@ int starlet_run(starlet *emu)
 		uc_reg_write(emu->uc, UC_ARM_REG_PC, &pc);
 
 		// Start emulating - pass Unicorn exception flags to halt_code
+
 		err = uc_emu_start(emu->uc, pc, 0, 0, 0);
-		switch (err) {
-		case UC_ERR_OK:
-			break;
-		default:
-			emu->halt_code = err;
-			break;
-		}
+		if (err != UC_ERR_OK) emu->halt_code = err;
+
+		uc_reg_read(emu->uc, UC_ARM_REG_PC, &pc);
+		//dbg("CPU halted at PC=%08x\n", pc);
+		if (pc == 0) break;
 
 		// If the halt code is non-zero, deal with it here.
-		// If __handle_halt_code returns true, stop the main loop.
+		// This is where we deal with interrupts and such.
+
 		if (emu->halt_code != 0)
 		{
 			should_halt = __handle_halt_code(emu);
@@ -519,9 +703,12 @@ int starlet_load_otp(starlet *e, char *filename)
 }
 
 // starlet_add_bp()
-// Add a simple breakpoint
+// Add a simple breakpoint.
+// FIXME: Let the user specify a context/disambiguate between different places
+// in the boot process.
 int starlet_add_bp(starlet *e, u32 addr)
 {
 	uc_hook x;
 	uc_hook_add(e->uc, &x, UC_HOOK_CODE, __hook_simple_bp, e,addr,addr);
 }
+

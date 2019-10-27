@@ -17,33 +17,45 @@ typedef int32_t s32;
 typedef int64_t s64;
 
 
-// Halt reason codes. The main loop uses either this enum, or Unicorn's codes
-// in order to distinguish exactly what needs to happen when execution halts.
-// 
-// Halt codes < 0x10000 indicate that the emulator should actually halt.
+/* Halt codes - these are meant to extend the space of Unicorn's uc_err enum.
+ * Values < 0x10000 are fatal (causing us to break out of the main loop).
+ *
+ *	HALT_INTERRUPT			- Generic interrupt handling
+ * 	HALT_INSN_INVALID		- Invalid insn/syscall handling
+ * 	HALT_SYSCALL_FIXUP		- Post-syscall handling
+ *
+ * 	HALT_BROM_ON_TO_SRAM_ON		- SRAM mirror enable
+ * 	HALT_SRAM_ON_TO_BROM_OFF	- BROM mapping disable
+ *
+ * 	HALT_BP				- Fatal; user-defined breakpoint
+ * 	HALT_UNIMPL			- Fatal; unimplemented behaviour
+ */
 
 enum halt_codes {
 
 	HALT_INTERRUPT			= 0x80000000,
 	HALT_INSN_INVALID		= 0x40000000,
-
+	HALT_SYSCALL_FIXUP		= 0x20000000,
 
 	HALT_BROM_ON_TO_SRAM_ON		= 0x00800000,
 	HALT_SRAM_ON_TO_BROM_OFF	= 0x00400000,
-	//HALT_xxxx			= 0x00200000,
-	//HALT_xxxx			= 0x00100000,
 
-	HALT_BLOCK_HOOK_DONE		= 0x00080000,
-
-	// Halt codes < 0x10000 break out of the main loop
 	HALT_BP				= 0x00008000,
-	HALT_EXCEPTION			= 0x00004000,
-	HALT_NONE			= 0x00000000,
+	HALT_UNIMPL			= 0x00004000,
 };
 
-// Flags for book-keeping
+
+/* Flags for internal book-keeping.
+ *
+ *	STATE_BROM_MAP_ON	- The boot ROM is mapped
+ *	STATE_SRAM_MIRROR_ON	- The SRAM mirror is enabled
+ *
+ *	STATE_BOOT0		- Execution in the boot ROM
+ *	STATE_BOOT1		- Execution in the first-stage bootloader
+ *	STATE_BOOT2		- Execution in the second-stage bootloader
+ */
+
 enum state {
-	STATE_INITED		= 0x8000000000000000,
 	STATE_BROM_MAP_ON	= 0x4000000000000000,
 	STATE_SRAM_MIRROR_ON	= 0x2000000000000000,
 
@@ -52,9 +64,10 @@ enum state {
 	STATE_BOOT2		= 0x0200000000000000,
 };
 
-// These containers are used to hold the actual backing memory for Unicorn.
-// During execution these are all HOT; need to think of a good strategy
-// for making sure accesses to these are as fast as possible.
+
+/* These containers are used to hold the actual backing memory for Unicorn.
+ * It's not clear if this is the best way to organize things.
+ */
 
 typedef struct sram
 {
@@ -90,7 +103,8 @@ typedef struct otpmem
 	u32 data[0x20];
 } otpmem;
 
-// State for various I/O devices (NAND, AES, SHA, etc.)
+
+/* Containers for the state of various I/O devices */
 
 typedef struct nand_interface
 {
@@ -100,20 +114,17 @@ typedef struct nand_interface
 } nand_interface;
 
 
-// Container describing an instance of the Starlet emulator.
-// This will probably be used alot, so there are probably some optimizations
-// we can do to make accesses on this super-fast.
+/* Top-level container describing an instance of the Starlet emulator. */
 
 typedef struct starlet
 {
-	// Emulator state
-
 	uc_engine *uc;		// Pointer to an instance of Unicorn
 	u32 timer;		// Hollywood timer
-	u32 interrupt;
+	u32 interrupt;		// Pending system interrupt number 
 
+	uc_hook halt_hook;	// Internal halt hook
+	uc_hook fixup_hook;	// Syscall fixup hook
 
-	uc_hook halt_hook;
 	u64 timeout;		// Emulation timeout, in seconds
 	u64 halt_code;		// Reason for emulator halt
 	u64 state;		// State bitfield
@@ -126,8 +137,6 @@ typedef struct starlet
 
 	mram mram;		// Main RAM backing memory
 	otpmem otp;		// EFUSE/OTP backing memory
-
-
 } starlet;
 
 

@@ -46,9 +46,6 @@ u8 nand_buf[0x10000];
 void nand_dma_write(starlet *starlet, u32 flags, u32 len)
 {
 	u32 eccfix_addr = 0;
-
-	// Grab parameters from the MMIO
-
 	u32 addr2 = read32(starlet->uc, NAND_ADDR2);
 	u32 data_addr = read32(starlet->uc, NAND_DATABUF);
 	u32 ecc_addr = read32(starlet->uc, NAND_ECCBUF);
@@ -58,21 +55,20 @@ void nand_dma_write(starlet *starlet, u32 flags, u32 len)
 	u32 nand_off = addr2 * NAND_PAGE_LEN;
 	memcpy(nand_buf, &starlet->nand.data[nand_off], len);
 
-	//dbg("NAND addr2=%08x nand_off=%08x data_addr=%08x ecc_addr=%08x\n", 
-	//	addr2, nand_off, data_addr, ecc_addr);
+	log("NAND dma page=%08x data=%08x ecc=%08x\n", addr2, data_addr, ecc_addr);
 
 	if (len == 0x800)
 	{
 		//dbg("NAND dma on %08x, len=%08x\n", data_addr, len);
-		uc_mem_write(starlet->uc, data_addr, nand_buf, len);
+		uc_virtual_mem_write(starlet->uc, data_addr, nand_buf, len);
 		memset(nand_buf, 0, 0x10000);
 	}
 	else if (len == 0x840)
 	{
 		//dbg("NAND dma on %08x, len=%08x\n", data_addr, 0x800);
 		//dbg("NAND dma on %08x, len=%08x\n", ecc_addr, 0x40);
-		uc_mem_write(starlet->uc, data_addr, nand_buf, 0x800);
-		uc_mem_write(starlet->uc, ecc_addr, &nand_buf[0x800], 0x40);
+		uc_virtual_mem_write(starlet->uc, data_addr, nand_buf, 0x800);
+		uc_virtual_mem_write(starlet->uc, ecc_addr, &nand_buf[0x800], 0x40);
 
 		if (flags & NAND_FLAG_ECC)
 		{
@@ -80,7 +76,7 @@ void nand_dma_write(starlet *starlet, u32 flags, u32 len)
 			{
 				eccfix_addr = (ecc_addr ^ 0x40) + (i * 4);
 				calc_ecc(nand_buf + (0x200 * i), ecc);
-				uc_mem_write(starlet->uc, eccfix_addr, &ecc,4);
+				uc_virtual_mem_write(starlet->uc, eccfix_addr, &ecc,4);
 			}
 		}
 		memset(nand_buf, 0, 0x10000);
@@ -95,13 +91,29 @@ void handle_nand_command(starlet *e, s64 ctrl)
 	u32 cmd = (ctrl & 0x00ff0000) >> 16;
 	u32 flags = (ctrl & 0x0000f000) >> 12;
 	u32 dsize = (ctrl & 0x00000fff);
+
+	if (ctrl & 0x40000000)
+		dbg("%s\n", "NAND requested IRQ on completion");
+
+	log("NAND handling command %02x\n", cmd);
 	switch(cmd) {
+
+	// Read page from NAND (used in bootloaders)
 	case NAND_CMD_READ0b:
 		nand_dma_write(e, flags, dsize);
 		break;
+
+	// As far as I know, these do nothing?
 	case 0x00:
 	case NAND_CMD_RESET:
-	default: break;
+		break;
+
+	// Die on unimplemented commands
+	default: 
+		dbg("NAND unimplemented command %02x\n", cmd);
+		e->halt_code = HALT_UNIMPL;
+		uc_emu_stop(e->uc);
+		break;
 	}
 }
 
@@ -157,9 +169,10 @@ static void handle_aes_command(starlet *e, s64 value)
 
 	// Read into a temporary buffer
 	memset(aes_src_buf, 0, 0x10000);
-	uc_mem_read(e->uc, src_addr, aes_src_buf, len);
+	//uc_mem_read(e->uc, src_addr, aes_src_buf, len);
+	uc_virtual_mem_read(e->uc, src_addr, aes_src_buf, len);
 
-	//dbg("AES dma on %08x, len=%08x\n", dst_addr, len);
+	log("AES\t dma on %08x, len=%08x\n", dst_addr, len);
 
 	if (use_aes)
 	{
@@ -180,9 +193,9 @@ static void handle_aes_command(starlet *e, s64 value)
 				use_tmp_iv?tmp_iv:aes_iv_fifo, AES_ENCRYPT);
 		}
 	}
-	else uc_mem_write(e->uc, dst_addr, aes_src_buf, len);
+	else uc_virtual_mem_write(e->uc, dst_addr, aes_src_buf, len);
 
-	uc_mem_write(e->uc, dst_addr, aes_dst_buf, len);
+	uc_virtual_mem_write(e->uc, dst_addr, aes_dst_buf, len);
 	memcpy(tmp_iv, aes_src_buf + (len - 0x10), 0x10);
 
 	write32(e->uc, AES_SRC, src_addr + len);
@@ -268,9 +281,10 @@ static void handle_sha_command(starlet *e, s64 value)
 
 	u32 len = ((value & 0xfff) + 1) * 0x40;
 	u32 src_addr = read32(e->uc, SHA_SRC);
-	uc_mem_read(e->uc, src_addr, sha_buf, len);
+	//uc_mem_read(e->uc, src_addr, sha_buf, len);
+	uc_virtual_mem_read(e->uc, src_addr, sha_buf, len);
 
-	//dbg("SHA digest, addr=%08x, len=%08x\n", src_addr, len);
+	log("SHA\t addr=%08x, len=%08x\n", src_addr, len);
 	SHA1Input(&sha_ctx, sha_buf, len);
 
 	write32(e->uc, SHA_SRC, src_addr + len);
@@ -357,63 +371,18 @@ static bool __mmio_hlwd(uc_engine *uc, uc_mem_type type, u64 address,
 		case HW_TIMER:
 			tmp = read32(uc, HW_TIMER);
 			write32(uc, HW_TIMER, tmp + 100);
-			//dbg("HW_TIMER=%08x\n", tmp+5);
+			dbg("HW_TIMER=%08x\n", tmp+5);
 			break;
 
-		case HW_SRNPROT: break;
-
-		// Clear the busy bit every time someone reads
 		case EFUSE_ADDR:
+			// Clear the busy bit every time someone reads
 			tmp = read32(uc, EFUSE_ADDR);
 			//dbg("EFUSE_ADDR cleared with %08x\n", tmp & 0x7fffffff);
 			write32(uc, EFUSE_ADDR, tmp & 0x7fffffff);
 			break;
 
-		// Suppress messages for these
-		case 0x0d8000c0:
-		case 0x0d8000c4:
-		case 0x0d8000c8:
-		case 0x0d8000cc:
-		case 0x0d8000d0:
-		case 0x0d8000d4:
-		case 0x0d8000d8:
-
-		case 0x0d8000dc:
-		case 0x0d8000e4:
-		case 0x0d8000e8:
-		case 0x0d8000ec:
-		case 0x0d8000f0:
-		case 0x0d8000f4:
-		case 0x0d8000f8:
-		case 0x0d8000fc:
-		case 0x0d800100:
-		case 0x0d800104:
-		case 0x0d800108:
-		case 0x0d80010c:
-		case 0x0d800110:
-		case 0x0d800114:
-		case 0x0d800118:
-		case 0x0d80011c:
-		case 0x0d800120:
-		case 0x0d800124:
-		case 0x0d800128:
-		case 0x0d80012c:
-		case 0x0d800130:
-		case 0x0d800134:
-		case 0x0d800138:
-		case 0x0d80013c:
-		case 0x0d800140:
-		case 0x0d800180:
-		case HW_SPARE0:
-		case HW_BOOT0:
-		case 0x0d800194:
-		case 0x0d8001bc:
-		case 0x0d8001c0:
-
-		case HW_VERSION: 
-			break;
+		// By default, just don't log accesses
 		default:
-			log("Hollywood read on %08x\n", address);
 			break;
 		}
 	}
@@ -424,7 +393,7 @@ static bool __mmio_hlwd(uc_engine *uc, uc_mem_type type, u64 address,
 			// Enable the SRAM mirror
 			if ((value & 0x20) && !(e->state & STATE_SRAM_MIRROR_ON))
 			{
-				dbg("%s\n", "Caught write: SRAM mirror on");
+				log("%s\n", "HLWD Turned SRAM mirror ON");
 				e->state |= STATE_SRAM_MIRROR_ON;
 				e->halt_code = HALT_BROM_ON_TO_SRAM_ON;
 				uc_hook_add(e->uc, &e->halt_hook,
@@ -448,7 +417,7 @@ static bool __mmio_hlwd(uc_engine *uc, uc_mem_type type, u64 address,
 			// Unmap the boot ROM
 			if ((value & 0x1000) && (e->state & STATE_BROM_MAP_ON))
 			{
-				dbg("%s\n", "Caught write: BROM unmapped");
+				log("%s\n", "HLWD BROM unmapped");
 				e->state &= ~STATE_BROM_MAP_ON;
 				e->halt_code = HALT_SRAM_ON_TO_BROM_OFF;
 				uc_hook_add(e->uc, &e->halt_hook,
@@ -466,48 +435,8 @@ static bool __mmio_hlwd(uc_engine *uc, uc_mem_type type, u64 address,
 			}
 			break;
 
-		// Suppress messages for these
-		case 0x0d8000c0:
-		case 0x0d8000c4:
-		case 0x0d8000c8:
-		case 0x0d8000cc:
-		case 0x0d8000d0:
-		case 0x0d8000d4:
-		case 0x0d8000d8:
-		case 0x0d8000dc:
-
-		case 0x0d8000e4:
-		case 0x0d8000e8:
-		case 0x0d8000ec:
-		case 0x0d8000f0:
-		case 0x0d8000f4:
-		case 0x0d8000f8:
-		case 0x0d8000fc:
-		case 0x0d800100:
-		case 0x0d800104:
-		case 0x0d800108:
-		case 0x0d80010c:
-		case 0x0d800110:
-		case 0x0d800114:
-		case 0x0d800118:
-		case 0x0d80011c:
-		case 0x0d800120:
-		case 0x0d800124:
-		case 0x0d800128:
-		case 0x0d80012c:
-		case 0x0d800130:
-		case 0x0d800134:
-		case 0x0d800138:
-		case 0x0d80013c:
-		case 0x0d800140:
-		case 0x0d800180:
-		case 0x0d800194:
-		case 0x0d8001bc:
-		case 0x0d8001c0:
-
-			break;
+		// By default, don't log any accesses
 		default: 
-			log("Hollywood write %08x on %08x\n", value, address);
 			break;
 		}
 	}
@@ -538,7 +467,6 @@ static bool __mmio_ddr(uc_engine *uc, uc_mem_type type, u64 address,
 		default: break;
 		}
 	}
-
 	return true;
 }
 

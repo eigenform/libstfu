@@ -23,18 +23,18 @@ time.
 
 ## Building
 You will probably need to build [Unicorn](https://github.com/unicorn-engine/unicorn)
-from source in order to deal with this.
+from source in order to deal with this. `libstfu` will probably fall in-and-out of 
+compatibility with upstream Unicorn. You may need to build from 
+[hosaka-corp/unicorn](https://github.com/hosaka-corp/unicorn) if some features do not 
+exist upstream [yet].
 
-Move into the project root and run `make`.
-This will build the libraries and some test binaries.
-
-I'm not interested in supported platforms other than Linux.
+In order to build the libraries and test binaries, move into the project root and 
+run `make`. Note that I'm not interested in supported platforms other than Linux.
 
 ## Usage
-Right now there are basically two cases - either you want to run emulation 
-through the entire boot process, or you want to start execution directly in
-some other binary (i.e. one of the bootloaders). For example, the tests require
-the following:
+We're confined to playing with the binaries in `tests/` right now.
+`tests/stfu.c` attempts to run the platform indefinitely. In order to run these,
+you will need the following (read the code for more details):
 
 - A dump of the boot ROM (`boot0`)
 - A dump of your Wii's EFUSE/OTP (one-time programmable) memory
