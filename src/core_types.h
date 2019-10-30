@@ -22,26 +22,34 @@ typedef int64_t s64;
  *
  *	HALT_INTERRUPT			- Generic interrupt handling
  * 	HALT_INSN_INVALID		- Invalid insn/syscall handling
+ * 	HALT_IRQ			- IRQ handling
+ *
  * 	HALT_SYSCALL_FIXUP		- Post-syscall handling
+ * 	HALT_IRQ_FIXUP			- Post-IRQ handling
  *
  * 	HALT_BROM_ON_TO_SRAM_ON		- SRAM mirror enable
  * 	HALT_SRAM_ON_TO_BROM_OFF	- BROM mapping disable
  *
  * 	HALT_BP				- Fatal; user-defined breakpoint
  * 	HALT_UNIMPL			- Fatal; unimplemented behaviour
+ * 	HALT_USER			- Fatal; user-requested fatal halt
  */
 
 enum halt_codes {
 
 	HALT_INTERRUPT			= 0x80000000,
 	HALT_INSN_INVALID		= 0x40000000,
-	HALT_SYSCALL_FIXUP		= 0x20000000,
+	HALT_IRQ			= 0x20000000,
+
+	HALT_SYSCALL_FIXUP		= 0x08000000,
+	HALT_IRQ_FIXUP			= 0x04000000,
 
 	HALT_BROM_ON_TO_SRAM_ON		= 0x00800000,
 	HALT_SRAM_ON_TO_BROM_OFF	= 0x00400000,
 
 	HALT_BP				= 0x00008000,
 	HALT_UNIMPL			= 0x00004000,
+	HALT_USER			= 0x00002000,
 };
 
 
@@ -121,6 +129,7 @@ typedef struct starlet
 	uc_engine *uc;		// Pointer to an instance of Unicorn
 	u32 timer;		// Hollywood timer
 	u32 interrupt;		// Pending system interrupt number 
+	u32 pending_irq;	// Pending IRQ bitmask (1=asserted)
 
 	uc_hook halt_hook;	// Internal halt hook
 	uc_hook fixup_hook;	// Syscall fixup hook

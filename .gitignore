@@ -4,6 +4,8 @@
 !.gitignore
 !src/
 !src/Makefile
+!src/core_hook.c
+!src/core_hook.h
 !src/core_types.h
 !src/ecc.c
 !src/ecc.h
@@ -12,6 +14,8 @@
 !src/ios.h
 !src/mmio.c
 !src/mmio.h
+!src/mmu.c
+!src/mmu.h
 !src/sha1.c
 !src/sha1.h
 !src/starlet.c

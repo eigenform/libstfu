@@ -3,6 +3,7 @@
 #include "util.h"
 
 #define LOGGING 1
+#define DEBUG 1
 
 // Indicies mapping to context names
 enum ctx_name_idx {
@@ -153,7 +154,40 @@ const char *syscall_name[] = {
 	"poke_debug_port",
 	"load_ppc",
 	"load_module",
-	// ...
+
+	"iosc_object_create",
+	"iosc_object_delete",
+	"iosc_secretkey_import",
+	"iosc_secretkey_export",
+	"iosc_pubkey_import",
+	"iosc_pubkey_export",
+	"iosc_sharedkey_compute",
+	"iosc_set_data",
+	"iosc_get_data",
+	"iosc_get_keysize",
+	"iosc_get_sigsize",
+
+	"iosc_genhash_async",
+	"iosc_genhash",
+	"iosc_encrypt_async",
+	"iosc_encrypt",
+	"iosc_decrypt_async",
+	"iosc_decrypt",
+
+	"iosc_pubkey_verify_sign",
+	"iosc_gen_blockmac",
+	"iosc_get_blockmac_async",
+	"iosc_import_cert",
+	"iosc_get_device_cert",
+	"iosc_set_ownership",
+	"iosc_get_ownership",
+	"iosc_gen_rand",
+	"iosc_gen_key",
+	"iosc_gen_pubsign_key",
+	"iosc_gen_cert",
+	"iosc_check_dihash",
+	"syscall_78",
+	"syscall_79",
 };
 
 
@@ -193,9 +227,34 @@ void log_context(u32 pc)
 // Log some information about a syscall and the arguments.
 void log_syscall(starlet *e, u32 sc_num)
 {
+	// FIXME: Deal with validation somewhere else, maybe
+	if (sc_num > sizeof(syscall_name))
+	{
+		dbg("??? syscall %08x (unimpl)\n", sc_num);
+		return;
+	}
+
+	// Suppress some calls that we don't want to log
+	switch (sc_num) {
+
+	// AHB Memflush
+	case 0x2f:
+	case 0x30:
+		return;
+
+	// Cache operations
+	case 0x3f:
+	case 0x40:
+		return;
+	
+	// V-to-P 
+	case 0x4f: return;
+	default:
+		break;
+	}
+
 	u32 r[6];
 	u32 lr;
-
 	uc_reg_read(e->uc, UC_ARM_REG_R0, &r[0]);
 	uc_reg_read(e->uc, UC_ARM_REG_R1, &r[1]);
 	uc_reg_read(e->uc, UC_ARM_REG_R2, &r[2]);
@@ -204,11 +263,7 @@ void log_syscall(starlet *e, u32 sc_num)
 	uc_reg_read(e->uc, UC_ARM_REG_R5, &r[5]);
 	uc_reg_read(e->uc, UC_ARM_REG_LR, &lr);
 
-
-	if (sc_num < sizeof(syscall_name))
-		log("%s() (lr=%08x)\n", syscall_name[sc_num], lr);
-	else
-		log("syscall %08x (lr=%08x) (log unimpl)\n", sc_num,lr);
+	log("%s() (lr=%08x)\n", syscall_name[sc_num], lr);
 }
 
 

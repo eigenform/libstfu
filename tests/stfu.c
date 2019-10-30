@@ -1,11 +1,23 @@
 #include <stdio.h>
+#include <signal.h>
 #include "starlet.h"
 #include "util.h"
 
+
 static starlet emu;
+
+// Handler for SIGINT; fatally halt emulation
+void sigint_handle(int signum)
+{
+	printf("Caught SIGINT\n");
+	emu.halt_code = HALT_USER;
+	uc_emu_stop(emu.uc);
+}
 
 int main(void)
 {
+	signal(SIGINT, sigint_handle);
+
 	// Initialize the emulator
 	starlet_init(&emu);
 

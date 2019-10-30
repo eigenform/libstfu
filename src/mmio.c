@@ -1,82 +1,82 @@
 /* mmio.c - libstfu memory-mapped i/o 
- *
- * There is apparently no AFTER_WRITE hook in Unicorn [at least, not yet].
- * In order to compensate for this, simply perform I/O operations immediately
- * on relevant write accesses. Then, we can just immediately unset the busy 
- * bit for all I/O control registers on the next mainloop iteration.
  */
 
 #include <string.h>
-
-#include "mmio.h"
-#include "ecc.h"
-#include "hollywood.h"
-#include "util.h"
-#include "sha1.h"
-
+#include <assert.h>
 #include <openssl/aes.h>
 #include <unicorn/unicorn.h>
 
-#ifndef LOGGING
+#include "mmio.h"
+#include "hollywood.h"
+#include "ecc.h"
+#include "util.h"
+#include "sha1.h"
+#include "core_hook.h"
+
 #define LOGGING 1
-#endif
-
-#ifndef DEBUG
 #define DEBUG 1
-#endif
-
 
 // ----------------------------------------------------------------------------
 
-#define NAND_PAGE_LEN	0x840
+#define NAND_PAGE_LEN		0x840
 
-#define NAND_FLAG_WAIT	0x08
-#define NAND_FLAG_WRITE	0x04
-#define NAND_FLAG_READ	0x02
-#define NAND_FLAG_ECC	0x01
+#define NAND_FLAG_WAIT		0x08
+#define NAND_FLAG_WRITE		0x04
+#define NAND_FLAG_READ		0x02
+#define NAND_FLAG_ECC		0x01
 
-#define NAND_CMD_RESET	0xff
-#define NAND_CMD_READ0b	0x30
+#define NAND_CMD_READ0b		0x30
+#define NAND_CMD_READ_ID	0x90
+#define NAND_CMD_RESET		0xff
 
 
 // nand_dma_write()
 // Do a NAND-to-ARM DMA write.
-u8 ecc[4];
-u8 nand_buf[0x10000];
-void nand_dma_write(starlet *starlet, u32 flags, u32 len)
+// NOTE: It seems like NAND_{DATA,ECC}BUF expects physical addresses.
+static u8 nand_id[5] = { 0xad, 0xdc, 0x80, 0x95, 0x00 }; // HY27UF084G2M
+static u8 ecc[4];
+static u8 nand_buf[0x10000];
+void nand_dma_write(starlet *e, u32 flags, u32 len)
 {
-	u32 eccfix_addr = 0;
-	u32 addr2 = read32(starlet->uc, NAND_ADDR2);
-	u32 data_addr = read32(starlet->uc, NAND_DATABUF);
-	u32 ecc_addr = read32(starlet->uc, NAND_ECCBUF);
+	u32 fix_addr = 0;
+	u32 addr2 = read32(e->uc, NAND_ADDR2);
+	u32 data_addr = read32(e->uc, NAND_DATABUF);
+	u32 ecc_addr = read32(e->uc, NAND_ECCBUF);
+	u32 pc;
 
 	// Get the offset of source data in the NAND buffer.
 	// FIXME: this extra copy into nand_buf is not necessary
 	u32 nand_off = addr2 * NAND_PAGE_LEN;
-	memcpy(nand_buf, &starlet->nand.data[nand_off], len);
+	memcpy(nand_buf, &e->nand.data[nand_off], len);
 
-	log("NAND dma page=%08x data=%08x ecc=%08x\n", addr2, data_addr, ecc_addr);
+	uc_reg_read(e->uc, UC_ARM_REG_PC, &pc);
+	log("NAND dma page=%08x data=%08x ecc=%08x len=%08x (pc=%08x)\n", 
+			addr2, data_addr, ecc_addr, len, pc);
 
 	if (len == 0x800)
 	{
 		//dbg("NAND dma on %08x, len=%08x\n", data_addr, len);
-		uc_virtual_mem_write(starlet->uc, data_addr, nand_buf, len);
+		//uc_virtual_mem_write(e->uc, data_addr, nand_buf, len);
+		uc_mem_write(e->uc, data_addr, nand_buf, len);
 		memset(nand_buf, 0, 0x10000);
 	}
 	else if (len == 0x840)
 	{
 		//dbg("NAND dma on %08x, len=%08x\n", data_addr, 0x800);
 		//dbg("NAND dma on %08x, len=%08x\n", ecc_addr, 0x40);
-		uc_virtual_mem_write(starlet->uc, data_addr, nand_buf, 0x800);
-		uc_virtual_mem_write(starlet->uc, ecc_addr, &nand_buf[0x800], 0x40);
+		//uc_virtual_mem_write(e->uc, data_addr, nand_buf, 0x800);
+		//uc_virtual_mem_write(e->uc, ecc_addr, &nand_buf[0x800], 0x40);
+		uc_mem_write(e->uc, data_addr, nand_buf, 0x800);
+		uc_mem_write(e->uc, ecc_addr, &nand_buf[0x800], 0x40);
 
 		if (flags & NAND_FLAG_ECC)
 		{
 			for (int i = 0; i < 4; i++)
 			{
-				eccfix_addr = (ecc_addr ^ 0x40) + (i * 4);
+				fix_addr = (ecc_addr ^ 0x40) + (i * 4);
 				calc_ecc(nand_buf + (0x200 * i), ecc);
-				uc_virtual_mem_write(starlet->uc, eccfix_addr, &ecc,4);
+				//uc_virtual_mem_write(e->uc,fix_addr,&ecc,4);
+				uc_mem_write(e->uc,fix_addr,&ecc,4);
 			}
 		}
 		memset(nand_buf, 0, 0x10000);
@@ -92,20 +92,32 @@ void handle_nand_command(starlet *e, s64 ctrl)
 	u32 flags = (ctrl & 0x0000f000) >> 12;
 	u32 dsize = (ctrl & 0x00000fff);
 
-	if (ctrl & 0x40000000)
-		dbg("%s\n", "NAND requested IRQ on completion");
+	u32 lr;
+	u32 data_addr = read32(e->uc, NAND_DATABUF);
+	u32 ecc_addr = read32(e->uc, NAND_ECCBUF);
+	uc_reg_read(e->uc, UC_ARM_REG_LR, &lr);
+	//log("NAND handling command %02x, flag=%08x databuf=%08x,eccbuf=%08x (lr=%08x)\n", 
+	//		cmd, flags, data_addr, ecc_addr, lr);
 
-	log("NAND handling command %02x\n", cmd);
 	switch(cmd) {
 
 	// Read page from NAND (used in bootloaders)
 	case NAND_CMD_READ0b:
+		assert(flags & NAND_FLAG_READ);
 		nand_dma_write(e, flags, dsize);
 		break;
 
-	// As far as I know, these do nothing?
+	// No idea what this does, perhaps nothing?
 	case 0x00:
+		break;
+
+	// Don't know what this does either; resets all the registers?
 	case NAND_CMD_RESET:
+		break;
+
+	// Reads the NAND ID (I imagine hardware behaviour is different)
+	case NAND_CMD_READ_ID:
+		uc_mem_write(e->uc, data_addr, nand_id, 5);
 		break;
 
 	// Die on unimplemented commands
@@ -114,6 +126,15 @@ void handle_nand_command(starlet *e, s64 ctrl)
 		e->halt_code = HALT_UNIMPL;
 		uc_emu_stop(e->uc);
 		break;
+	}
+
+	// User requested an IRQ after NAND command completion
+	if (ctrl & 0x40000000)
+	{
+		// Set the NAND IRQ bit, then schedule the handler to force
+		// guest code into throwing an IRQ exception
+		e->pending_irq |= IRQ_NAND;
+		register_halt_hook(e, HALT_IRQ);
 	}
 }
 
@@ -127,12 +148,28 @@ static bool __mmio_nand(uc_engine *uc, uc_mem_type type, u64 address,
 	if (type == UC_MEM_READ)
 	{
 		switch (address) {
+		// skyeye-starlet just hardwires this to zero?
 		case NAND_CTRL:
 			tmp = read32(uc, NAND_CTRL);
-			//dbg("NAND_CTRL cleared with %08x\n", tmp & 0x7fffffff);
+
+
+			// The IRQ handler writes this on NAND IRQ. 
+			// Hardware behaviour probably does not involve this
+			// write actually setting all these bits?
+			if (tmp == 0x7fffffff)
+			{
+				write32(uc, NAND_CTRL, 0);
+				break;
+			}
+
+			// If an IRQ was requested, don't do anything
+			//if (tmp & 0x40000000) break;
+
+			// On every read, just unset the busy bit
 			write32(uc, NAND_CTRL, tmp & 0x7fffffff);
 			break;
-		default: break;
+		default: 
+			break;
 		}
 	}
 	else if (type == UC_MEM_WRITE)
@@ -141,7 +178,10 @@ static bool __mmio_nand(uc_engine *uc, uc_mem_type type, u64 address,
 		case NAND_CTRL:
 			if (value & 0x80000000) handle_nand_command(e, value);
 			break;
-		default: break;
+		case NAND_DATABUF:
+			break;
+		default: 
+			break;
 		}
 	}
 }
@@ -169,8 +209,8 @@ static void handle_aes_command(starlet *e, s64 value)
 
 	// Read into a temporary buffer
 	memset(aes_src_buf, 0, 0x10000);
-	//uc_mem_read(e->uc, src_addr, aes_src_buf, len);
-	uc_virtual_mem_read(e->uc, src_addr, aes_src_buf, len);
+	//uc_virtual_mem_read(e->uc, src_addr, aes_src_buf, len);
+	uc_mem_read(e->uc, src_addr, aes_src_buf, len);
 
 	log("AES\t dma on %08x, len=%08x\n", dst_addr, len);
 
@@ -193,9 +233,14 @@ static void handle_aes_command(starlet *e, s64 value)
 				use_tmp_iv?tmp_iv:aes_iv_fifo, AES_ENCRYPT);
 		}
 	}
-	else uc_virtual_mem_write(e->uc, dst_addr, aes_src_buf, len);
+	else 
+	{
+		//uc_virtual_mem_write(e->uc, dst_addr, aes_src_buf, len);
+		uc_mem_write(e->uc, dst_addr, aes_src_buf, len);
+	}
 
-	uc_virtual_mem_write(e->uc, dst_addr, aes_dst_buf, len);
+	//uc_virtual_mem_write(e->uc, dst_addr, aes_dst_buf, len);
+	uc_mem_write(e->uc, dst_addr, aes_dst_buf, len);
 	memcpy(tmp_iv, aes_src_buf + (len - 0x10), 0x10);
 
 	write32(e->uc, AES_SRC, src_addr + len);
@@ -281,8 +326,8 @@ static void handle_sha_command(starlet *e, s64 value)
 
 	u32 len = ((value & 0xfff) + 1) * 0x40;
 	u32 src_addr = read32(e->uc, SHA_SRC);
-	//uc_mem_read(e->uc, src_addr, sha_buf, len);
-	uc_virtual_mem_read(e->uc, src_addr, sha_buf, len);
+	//uc_virtual_mem_read(e->uc, src_addr, sha_buf, len);
+	uc_mem_read(e->uc, src_addr, sha_buf, len);
 
 	log("SHA\t addr=%08x, len=%08x\n", src_addr, len);
 	SHA1Input(&sha_ctx, sha_buf, len);
@@ -353,14 +398,13 @@ static bool __mmio_sha(uc_engine *uc, uc_mem_type type, u64 address,
 
 // ----------------------------------------------------------------------------
 
-void __hook_halt(uc_engine *uc, u64 addr, u32 size, starlet *emu);
 
 // __mmio_hlwd()
 // Hollywood register MMIO handler
 static bool __mmio_hlwd(uc_engine *uc, uc_mem_type type, u64 address,
 	int size, s64 value, starlet *e)
 {
-	u32 tmp;
+	u32 tmp, tmp2;
 
 	if (type == UC_MEM_READ)
 	{
@@ -372,6 +416,18 @@ static bool __mmio_hlwd(uc_engine *uc, uc_mem_type type, u64 address,
 			tmp = read32(uc, HW_TIMER);
 			write32(uc, HW_TIMER, tmp + 100);
 			dbg("HW_TIMER=%08x\n", tmp+5);
+			break;
+
+		case HW_ALARM:
+			dbg("%s\n", "HW_ALARM read");
+			break;
+
+		// We use e->arm_int_sts to keep the actual value of this
+		// register because guest writes will clear bits
+		case HW_ARM_INTSTS:
+			//log("%s\n", "INT ARM_INTSTS read");
+			tmp = read32(uc, HW_ARM_INTEN);
+			write32(uc, HW_ARM_INTSTS, e->pending_irq & tmp);
 			break;
 
 		case EFUSE_ADDR:
@@ -389,6 +445,17 @@ static bool __mmio_hlwd(uc_engine *uc, uc_mem_type type, u64 address,
 	else if (type == UC_MEM_WRITE)
 	{
 		switch (address) {
+		case HW_TIMER:
+			dbg("HW_TIMER write %08x\n", value);
+			break;
+		case HW_ALARM:
+			dbg("HW_ALARM write %08x\n", value);
+			break;
+
+		case HW_ARM_INTSTS:
+			//log("INT\t Cleared bits %08x on ARM_INTSTS\n", value);
+			e->pending_irq = (e->pending_irq & ~value);
+			break;
 		case HW_SRNPROT:
 			// Enable the SRAM mirror
 			if ((value & 0x20) && !(e->state & STATE_SRAM_MIRROR_ON))
@@ -396,8 +463,7 @@ static bool __mmio_hlwd(uc_engine *uc, uc_mem_type type, u64 address,
 				log("%s\n", "HLWD Turned SRAM mirror ON");
 				e->state |= STATE_SRAM_MIRROR_ON;
 				e->halt_code = HALT_BROM_ON_TO_SRAM_ON;
-				uc_hook_add(e->uc, &e->halt_hook,
-					UC_HOOK_CODE,__hook_halt, e,1,0);
+				register_halt_hook(e, HALT_BROM_ON_TO_SRAM_ON);
 			}
 			break;
 		case HW_SPARE0:
@@ -420,8 +486,7 @@ static bool __mmio_hlwd(uc_engine *uc, uc_mem_type type, u64 address,
 				log("%s\n", "HLWD BROM unmapped");
 				e->state &= ~STATE_BROM_MAP_ON;
 				e->halt_code = HALT_SRAM_ON_TO_BROM_OFF;
-				uc_hook_add(e->uc, &e->halt_hook,
-					UC_HOOK_CODE,__hook_halt, e,1,0);
+				register_halt_hook(e, HALT_SRAM_ON_TO_BROM_OFF);
 			}
 			break;
 		case EFUSE_ADDR:
@@ -471,12 +536,11 @@ static bool __mmio_ddr(uc_engine *uc, uc_mem_type type, u64 address,
 }
 
 
-// ---------------------------------------------------------------------------
-
-#define MMIO_HOOK	(UC_HOOK_MEM_WRITE | UC_HOOK_MEM_READ)
+// ----------------------------------------------------------------------------
 
 // register_mmio_hooks()
 // Register all of the MMIO hooks.
+#define MMIO_HOOK (UC_HOOK_MEM_WRITE | UC_HOOK_MEM_READ)
 int register_mmio_hooks(starlet *e) 
 { 
 	uc_hook x;

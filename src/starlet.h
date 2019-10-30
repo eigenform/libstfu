@@ -2,6 +2,8 @@
 #define _STARLET_H
 
 #include "mmio.h"
+#include "core_hook.h"
+#include "mmu.h"
 
 // These are libstfu functions exposed to the user.
 
