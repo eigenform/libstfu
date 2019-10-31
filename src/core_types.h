@@ -106,10 +106,8 @@ typedef struct iomem
 	u8	  ddr[0x00000400]; // 1K, 0x0d8b4000
 } iomem;
 
-typedef struct otpmem
-{
-	u32 data[0x20];
-} otpmem;
+typedef struct otpmem { u32 data[0x20]; } otpmem;
+typedef struct seeprom_mem { u16 data[0x80]; } seeprom_mem;
 
 
 /* Containers for the state of various I/O devices */
@@ -146,6 +144,7 @@ typedef struct starlet
 
 	mram mram;		// Main RAM backing memory
 	otpmem otp;		// EFUSE/OTP backing memory
+	seeprom_mem seeprom;	// SEEPROM backing memory
 } starlet;
 
 

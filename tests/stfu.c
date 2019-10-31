@@ -38,9 +38,10 @@ int main(void)
 	starlet_load_nand_buffer(&emu, nand_data, nand_size);
 	free(nand_data);
 
-	// Load boot ROM and OTP
+	// Load boot ROM, OTP, and SEEPROM
 	starlet_load_boot0(&emu, "boot0.bin");
 	starlet_load_otp(&emu, "otp.bin");
+	starlet_load_seeprom(&emu, "seeprom.bin");
 
 	// Breakpoints on boot0/boot1 panic()
 	//starlet_add_bp(&emu, 0xffff00bc);

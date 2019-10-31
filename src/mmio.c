@@ -456,6 +456,7 @@ static bool __mmio_hlwd(uc_engine *uc, uc_mem_type type, u64 address,
 			//log("INT\t Cleared bits %08x on ARM_INTSTS\n", value);
 			e->pending_irq = (e->pending_irq & ~value);
 			break;
+
 		case HW_SRNPROT:
 			// Enable the SRAM mirror
 			if ((value & 0x20) && !(e->state & STATE_SRAM_MIRROR_ON))

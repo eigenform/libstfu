@@ -482,6 +482,26 @@ int starlet_load_otp(starlet *e, char *filename)
 
 }
 
+// starlet_load_seeprom()
+// Load SEEPROM memory from a file.
+int starlet_load_seeprom(starlet *e, char *filename)
+{
+	FILE *fp;
+	size_t bytes_read;
+	uc_err err;
+
+	size_t filesize = get_filesize(filename);
+	if (filesize == -1)
+	{
+		printf("Couldn't open %s\n", filename);
+		return -1;
+	}
+	fp = fopen(filename, "rb");
+	bytes_read = fread(&e->seeprom, 1, 0x100, fp);
+	fclose(fp);
+	return 0;
+}
+
 // starlet_add_bp()
 // Add a simple breakpoint.
 int starlet_add_bp(starlet *e, u32 addr) { register_bp_hook(e, addr); }
