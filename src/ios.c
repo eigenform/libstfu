@@ -11,7 +11,7 @@ struct r_ctx
 {
 	const char *name;
 	u32 lr;
-	u32 r[6];
+	u32 r[9];
 };
 
 // Entry for logging information about a syscall.
@@ -108,16 +108,17 @@ void ios_heap_alloc(starlet *e, struct r_ctx *ctx)
 	log("%s(%d, 0x%08x) (lr=%08x)\n", ctx->name, 
 		ctx->r[0], ctx->r[1], ctx->lr);
 }
-void ios_open(starlet *e, struct r_ctx *ctx)
+void ios_log_str_int(starlet *e, struct r_ctx *ctx)
 {
 	uc_virtual_mem_read(e->uc, ctx->r[0], strbuf, 0x100);
 	log("%s(\"%s\", %d) (lr=%08x)\n", ctx->name, 
 		strbuf, ctx->r[1], ctx->lr);
 }
 
-
-
-
+void ios_log_int(starlet *e, struct r_ctx *ctx)
+{
+	log("%s(%d) (lr=%08x)\n", ctx->name, ctx->r[0], ctx->lr);
+}
 
 // Table of syscalls.
 // Entries with a NULL function pointer are not logged.
@@ -127,31 +128,31 @@ const struct syscall_info syscall_table[0x80] = {
 	{ "thread_cancel",		ios_thread_cancel },
 	{ "thread_get_id",		ios_log_default },
 	{ "thread_get_pid",		ios_log_default },
-	{ "thread_continue",		ios_log_default },
-	{ "thread_suspend",		ios_log_default },
+	{ "thread_continue",		ios_log_int },
+	{ "thread_suspend",		ios_log_int },
 	{ "thread_yield",		ios_log_default },
-	{ "thread_get_prio",		ios_log_default },
+	{ "thread_get_prio",		ios_log_int },
 	{ "thread_set_prio",		ios_log_default },
 	{ "mqueue_create",		ios_log_default },
-	{ "mqueue_destroy",		ios_log_default },
+	{ "mqueue_destroy",		ios_log_int },
 	{ "mqueue_send",		ios_log_mq_op },
 	{ "mqueue_jam",			ios_log_mq_op },
 	{ "mqueue_recv",		ios_log_mq_op },
 	{ "mqueue_register_handler",	ios_log_default },
-	{ "mqueue_destroy_handler",	ios_log_default },
+	{ "mqueue_destroy_handler",	ios_log_int },
 	{ "timer_create",		ios_timer_create },
 	{ "timer_restart",		ios_log_default },
-	{ "timer_stop",			ios_log_default },
-	{ "timer_destroy",		ios_log_default },
+	{ "timer_stop",			ios_log_int },
+	{ "timer_destroy",		ios_log_int },
 	{ "timer_now",			ios_log_default },
 	{ "heap_create",		ios_log_default },
-	{ "heap_destroy",		ios_log_default },
+	{ "heap_destroy",		ios_log_int },
 	{ "heap_alloc",			ios_heap_alloc },
 	{ "heap_alloc_aligned", 	ios_log_default },
 	{ "heap_free",			ios_log_default },
-	{ "register_device",		ios_log_default },
-	{ "ios_open",			ios_open },
-	{ "ios_close",			ios_log_default },
+	{ "register_device",		ios_log_str_int },
+	{ "ios_open",			ios_log_str_int },
+	{ "ios_close",			ios_log_int },
 	{ "ios_read",			ios_log_default },
 	{ "ios_write",			ios_log_default },
 	{ "ios_seek",			ios_log_default },
@@ -173,8 +174,8 @@ const struct syscall_info syscall_table[0x80] = {
 	{ "cc_ahb_memflush",		NULL },
 	{ "swirq31",			ios_log_default },
 	{ "swirq18",			ios_log_default },
-	{ "do_swirq7_8",		ios_log_default },
-	{ "swirq",			ios_log_default },
+	{ "do_swirq7_8",		ios_log_int },
+	{ "swirq",			ios_log_int },
 	{ "iobuf_access_pool",		ios_log_default },
 	{ "iobuf_alloc",		ios_log_default },
 	{ "iobuf_free",			ios_log_default },
@@ -200,13 +201,13 @@ const struct syscall_info syscall_table[0x80] = {
 	{ "kernel_printf",		ios_log_default },
 	{ "kernel_setver",		ios_log_default },
 	{ "kernel_getver",		ios_log_default },
-	{ "set_di_spinup",		ios_log_default },
+	{ "set_di_spinup",		ios_log_int },
 	{ "virt_to_phys",		NULL },
-	{ "dvdvideo_set",		ios_log_default },
+	{ "dvdvideo_set",		ios_log_int },
 	{ "dvdvideo_get",		ios_log_default },
 	{ "exictrl_toggle",		ios_log_default },
 	{ "exictrl_get",		ios_log_default },
-	{ "set_ahbprot",		ios_log_default },
+	{ "set_ahbprot",		ios_log_int },
 	{ "get_busclk",			ios_log_default },
 	{ "poke_gpio",			ios_log_default },
 	{ "write_ddr_reg",		ios_log_default },
@@ -298,6 +299,9 @@ void log_syscall(starlet *e, u32 sc_num)
 		uc_reg_read(e->uc, UC_ARM_REG_R3, &fmt_ctx.r[3]);
 		uc_reg_read(e->uc, UC_ARM_REG_R4, &fmt_ctx.r[4]);
 		uc_reg_read(e->uc, UC_ARM_REG_R5, &fmt_ctx.r[5]);
+		uc_reg_read(e->uc, UC_ARM_REG_R5, &fmt_ctx.r[6]);
+		uc_reg_read(e->uc, UC_ARM_REG_R5, &fmt_ctx.r[7]);
+		uc_reg_read(e->uc, UC_ARM_REG_R5, &fmt_ctx.r[8]);
 		fmt_ctx.name = syscall_table[sc_num].name;
 
 		// Call the formatter for this particular syscall
