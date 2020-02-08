@@ -5,6 +5,31 @@
 #define LOGGING 1
 #define DEBUG 1
 
+
+// Context passed to a syscall logger/formatter
+struct r_ctx 
+{
+	const char *name;
+	u32 lr;
+	u32 r[6];
+};
+
+// Entry for logging information about a syscall.
+struct syscall_info 
+{ 
+	const char *name; 
+	void (*print)(starlet *e, struct r_ctx *ctx);
+};
+
+// Filled out before calling into a formatter
+static char strbuf[0x100];
+struct r_ctx fmt_ctx = {
+	NULL,
+	0,
+	{ 0 },
+};
+
+
 // Indicies mapping to context names
 enum ctx_name_idx {
 	CTX_FS = 0,
@@ -47,149 +72,179 @@ const char *ctx_name[] = {
 	"UNK",
 };
 
-const char *syscall_name[] = {
-	"thread_create",
-	"thread_join",
-	"thread_cancel",
-	"thread_get_id",
-	"thread_get_pid",
-	"thread_continue",
-	"thread_suspend",
-	"thread_yield",
-	"thread_get_prio",
-	"thread_set_prio",
+/* The following are logging functions that are unique to particular syscalls
+ * or groups of syscalls.
+ */
 
-	"mqueue_create",
-	"mqueue_destroy",
-	"mqueue_send",
-	"mqueue_jam",
-	"mqueue_recv",
-	"mqueue_register_handler",
-	"mqueue_destroy_handler",
+void ios_log_default(starlet *e, struct r_ctx *ctx)
+{
+	log("%s() (lr=%08x)\n", ctx->name, ctx->lr);
+}
 
-	"timer_create",
-	"timer_restart",
-	"timer_stop",
-	"timer_destroy",
-	"timer_now",
+void ios_log_mq_op(starlet *e, struct r_ctx *ctx)
+{
+	log("%s(%d, 0x%08x, 0x%08x) (lr=%08x)\n", ctx->name, ctx->r[0], 
+		ctx->r[1], ctx->r[2], ctx->lr);
+}
 
-	"heap_create",
-	"heap_destroy",
-	"heap_alloc",
-	"heap_alloc_aligned",
-	"heap_free",
+void ios_thread_create(starlet *e, struct r_ctx *ctx)
+{
+	log("%s(0x%08x, 0x%08x, 0x%08x, 0x%08x, %d, %d) (lr=%08x)\n", 
+		ctx->name, ctx->r[0], ctx->r[1], ctx->r[2], ctx->r[3], 
+		ctx->r[4], ctx->r[5], ctx->lr);
+}
+void ios_thread_cancel(starlet *e, struct r_ctx *ctx)
+{
+	log("%s(%d, 0x%08x) (lr=%08x)\n", ctx->name, 
+		ctx->r[0], ctx->r[1], ctx->lr);
+}
+void ios_timer_create(starlet *e, struct r_ctx *ctx)
+{
+	log("%s(%d, %d, %d, 0x%08x) (lr=%08x)\n", ctx->name, 
+		ctx->r[0], ctx->r[1], ctx->r[2], ctx->r[3], ctx->lr);
+}
+void ios_heap_alloc(starlet *e, struct r_ctx *ctx)
+{
+	log("%s(%d, 0x%08x) (lr=%08x)\n", ctx->name, 
+		ctx->r[0], ctx->r[1], ctx->lr);
+}
+void ios_open(starlet *e, struct r_ctx *ctx)
+{
+	uc_virtual_mem_read(e->uc, ctx->r[0], strbuf, 0x100);
+	log("%s(\"%s\", %d) (lr=%08x)\n", ctx->name, 
+		strbuf, ctx->r[1], ctx->lr);
+}
 
-	"register_device",
 
-	"ios_open",
-	"ios_close",
-	"ios_read",
-	"ios_write",
-	"ios_seek",
-	"ios_ioctl",
-	"ios_ioctlv",
 
-	"ios_open_async",
-	"ios_close_async",
-	"ios_read_async",
-	"ios_write_async",
-	"ios_seek_async",
-	"ios_ioctl_async",
-	"ios_ioctlv_async",
-	"ios_resource_reply",
 
-	"set_uid",
-	"get_uid",
-	"set_gid",
-	"get_gid",
 
-	"ahb_memflush",
-	"cc_ahb_memflush",
-
-	"swirq31",
-	"swirq18",
-	"do_swirq7_8",
-	"swirq",
-
-	"iobuf_access_pool",
-	"iobuf_alloc",
-	"iobuf_free",
-	"iobuf_log_hdrinfo",
-	"iobuf_log_bufinfo",
-	"iobuf_extend",
-	"iobuf_push",
-	"iobuf_pull",
-	"iobuf_verify",
-
-	"syscall_3e",
-
-	"sync_before_read",
-	"sync_after_write",
-
-	"ppc_boot",
-	"ios_boot",
-	"boot_new_ios_kernel",
-	"di_reset_assert",
-	"di_reset_deassert",
-	"di_reset_check",
-
-	"syscall_47",
-	"syscall_48",
-
-	"get_boot_vector",
-	"get_hlwd_rev",
-	"kernel_printf",
-	"kernel_setver",
-	"kernel_getver",
-	"set_di_spinup",
-	"virt_to_phys",
-	"dvdvideo_set",
-	"dvdvideo_get",
-	"exictrl_toggle",
-	"exictrl_get",
-	"set_ahbprot",
-	"get_busclk",
-	"poke_gpio",
-	"write_ddr_reg",
-	"poke_debug_port",
-	"load_ppc",
-	"load_module",
-
-	"iosc_object_create",
-	"iosc_object_delete",
-	"iosc_secretkey_import",
-	"iosc_secretkey_export",
-	"iosc_pubkey_import",
-	"iosc_pubkey_export",
-	"iosc_sharedkey_compute",
-	"iosc_set_data",
-	"iosc_get_data",
-	"iosc_get_keysize",
-	"iosc_get_sigsize",
-
-	"iosc_genhash_async",
-	"iosc_genhash",
-	"iosc_encrypt_async",
-	"iosc_encrypt",
-	"iosc_decrypt_async",
-	"iosc_decrypt",
-
-	"iosc_pubkey_verify_sign",
-	"iosc_gen_blockmac",
-	"iosc_get_blockmac_async",
-	"iosc_import_cert",
-	"iosc_get_device_cert",
-	"iosc_set_ownership",
-	"iosc_get_ownership",
-	"iosc_gen_rand",
-	"iosc_gen_key",
-	"iosc_gen_pubsign_key",
-	"iosc_gen_cert",
-	"iosc_check_dihash",
-	"syscall_78",
-	"syscall_79",
+// Table of syscalls.
+// Entries with a NULL function pointer are not logged.
+const struct syscall_info syscall_table[0x80] = {
+	{ "thread_create",		ios_thread_create },
+	{ "thread_join",		ios_log_default },
+	{ "thread_cancel",		ios_thread_cancel },
+	{ "thread_get_id",		ios_log_default },
+	{ "thread_get_pid",		ios_log_default },
+	{ "thread_continue",		ios_log_default },
+	{ "thread_suspend",		ios_log_default },
+	{ "thread_yield",		ios_log_default },
+	{ "thread_get_prio",		ios_log_default },
+	{ "thread_set_prio",		ios_log_default },
+	{ "mqueue_create",		ios_log_default },
+	{ "mqueue_destroy",		ios_log_default },
+	{ "mqueue_send",		ios_log_mq_op },
+	{ "mqueue_jam",			ios_log_mq_op },
+	{ "mqueue_recv",		ios_log_mq_op },
+	{ "mqueue_register_handler",	ios_log_default },
+	{ "mqueue_destroy_handler",	ios_log_default },
+	{ "timer_create",		ios_timer_create },
+	{ "timer_restart",		ios_log_default },
+	{ "timer_stop",			ios_log_default },
+	{ "timer_destroy",		ios_log_default },
+	{ "timer_now",			ios_log_default },
+	{ "heap_create",		ios_log_default },
+	{ "heap_destroy",		ios_log_default },
+	{ "heap_alloc",			ios_heap_alloc },
+	{ "heap_alloc_aligned", 	ios_log_default },
+	{ "heap_free",			ios_log_default },
+	{ "register_device",		ios_log_default },
+	{ "ios_open",			ios_open },
+	{ "ios_close",			ios_log_default },
+	{ "ios_read",			ios_log_default },
+	{ "ios_write",			ios_log_default },
+	{ "ios_seek",			ios_log_default },
+	{ "ios_ioctl",			ios_log_default },
+	{ "ios_ioctlv",			ios_log_default },
+	{ "ios_open_async",		ios_log_default },
+	{ "ios_close_async",		ios_log_default },
+	{ "ios_read_async",		ios_log_default },
+	{ "ios_write_async",		ios_log_default },
+	{ "ios_seek_async",		ios_log_default },
+	{ "ios_ioctl_async",		ios_log_default },
+	{ "ios_ioctlv_async",		ios_log_default },
+	{ "ios_resource_reply", 	ios_log_default },
+	{ "set_uid",			ios_log_default },
+	{ "get_uid",			ios_log_default },
+	{ "set_gid",			ios_log_default },
+	{ "get_gid",			ios_log_default },
+	{ "ahb_memflush",		NULL },
+	{ "cc_ahb_memflush",		NULL },
+	{ "swirq31",			ios_log_default },
+	{ "swirq18",			ios_log_default },
+	{ "do_swirq7_8",		ios_log_default },
+	{ "swirq",			ios_log_default },
+	{ "iobuf_access_pool",		ios_log_default },
+	{ "iobuf_alloc",		ios_log_default },
+	{ "iobuf_free",			ios_log_default },
+	{ "iobuf_log_hdrinfo",		ios_log_default },
+	{ "iobuf_log_bufinfo",		ios_log_default },
+	{ "iobuf_extend",		ios_log_default },
+	{ "iobuf_push",			ios_log_default },
+	{ "iobuf_pull",			ios_log_default },
+	{ "iobuf_verify",		ios_log_default },
+	{ "syscall_3e",			ios_log_default },
+	{ "sync_before_read",		NULL },
+	{ "sync_after_write",		NULL },
+	{ "ppc_boot",			ios_log_default },
+	{ "ios_boot",			ios_log_default },
+	{ "boot_new_ios_kernel",	ios_log_default },
+	{ "di_reset_assert",		ios_log_default },
+	{ "di_reset_deassert",		ios_log_default },
+	{ "di_reset_check",		ios_log_default },
+	{ "syscall_47",			ios_log_default },
+	{ "syscall_48",			ios_log_default },
+	{ "get_boot_vector",		ios_log_default },
+	{ "get_hlwd_rev",		ios_log_default },
+	{ "kernel_printf",		ios_log_default },
+	{ "kernel_setver",		ios_log_default },
+	{ "kernel_getver",		ios_log_default },
+	{ "set_di_spinup",		ios_log_default },
+	{ "virt_to_phys",		NULL },
+	{ "dvdvideo_set",		ios_log_default },
+	{ "dvdvideo_get",		ios_log_default },
+	{ "exictrl_toggle",		ios_log_default },
+	{ "exictrl_get",		ios_log_default },
+	{ "set_ahbprot",		ios_log_default },
+	{ "get_busclk",			ios_log_default },
+	{ "poke_gpio",			ios_log_default },
+	{ "write_ddr_reg",		ios_log_default },
+	{ "poke_debug_port",		ios_log_default },
+	{ "load_ppc",			ios_log_default },
+	{ "load_module",		ios_log_default },
+	{ "iosc_object_create", 	ios_log_default },
+	{ "iosc_object_delete", 	ios_log_default },
+	{ "iosc_secretkey_import",	ios_log_default },
+	{ "iosc_secretkey_export",	ios_log_default },
+	{ "iosc_pubkey_import",		ios_log_default },
+	{ "iosc_pubkey_export",		ios_log_default },
+	{ "iosc_sharedkey_compute",	ios_log_default },
+	{ "iosc_set_data",		ios_log_default },
+	{ "iosc_get_data",		ios_log_default },
+	{ "iosc_get_keysize",		ios_log_default },
+	{ "iosc_get_sigsize",		ios_log_default },
+	{ "iosc_genhash_async", 	ios_log_default },
+	{ "iosc_genhash",		ios_log_default },
+	{ "iosc_encrypt_async", 	ios_log_default },
+	{ "iosc_encrypt",		ios_log_default },
+	{ "iosc_decrypt_async", 	ios_log_default },
+	{ "iosc_decrypt",		ios_log_default },
+	{ "iosc_pubkey_verify_sign",	ios_log_default },
+	{ "iosc_gen_blockmac",		ios_log_default },
+	{ "iosc_get_blockmac_async",	ios_log_default },
+	{ "iosc_import_cert",		ios_log_default },
+	{ "iosc_get_device_cert",	ios_log_default },
+	{ "iosc_set_ownership",		ios_log_default },
+	{ "iosc_get_ownership", 	ios_log_default },
+	{ "iosc_gen_rand",		ios_log_default },
+	{ "iosc_gen_key",		ios_log_default },
+	{ "iosc_gen_pubsign_key",	ios_log_default },
+	{ "iosc_gen_cert",		ios_log_default },
+	{ "iosc_check_dihash",		ios_log_default },
+	{ "syscall_78",			ios_log_default },
+	{ "syscall_79",			ios_log_default },
 };
-
 
 
 // get_ctx_name_idx()
@@ -222,48 +277,35 @@ void log_context(u32 pc)
 	}
 }
 
-
 // log_syscall()
 // Log some information about a syscall and the arguments.
 void log_syscall(starlet *e, u32 sc_num)
 {
+	
 	// FIXME: Deal with validation somewhere else, maybe
-	if (sc_num > sizeof(syscall_name))
+	if (sc_num > 0x80)
 	{
 		dbg("??? syscall %08x (unimpl)\n", sc_num);
 		return;
 	}
 
-	// Suppress some calls that we don't want to log
-	switch (sc_num) {
+	if (syscall_table[sc_num].print != NULL)
+	{
+		uc_reg_read(e->uc, UC_ARM_REG_LR, &fmt_ctx.lr);
+		uc_reg_read(e->uc, UC_ARM_REG_R0, &fmt_ctx.r[0]);
+		uc_reg_read(e->uc, UC_ARM_REG_R1, &fmt_ctx.r[1]);
+		uc_reg_read(e->uc, UC_ARM_REG_R2, &fmt_ctx.r[2]);
+		uc_reg_read(e->uc, UC_ARM_REG_R3, &fmt_ctx.r[3]);
+		uc_reg_read(e->uc, UC_ARM_REG_R4, &fmt_ctx.r[4]);
+		uc_reg_read(e->uc, UC_ARM_REG_R5, &fmt_ctx.r[5]);
+		fmt_ctx.name = syscall_table[sc_num].name;
 
-	// AHB Memflush
-	case 0x2f:
-	case 0x30:
-		return;
-
-	// Cache operations
-	case 0x3f:
-	case 0x40:
-		return;
-	
-	// V-to-P 
-	case 0x4f: return;
-	default:
-		break;
+		// Call the formatter for this particular syscall
+		syscall_table[sc_num].print(
+			e, 
+			&fmt_ctx
+		);
 	}
-
-	u32 r[6];
-	u32 lr;
-	uc_reg_read(e->uc, UC_ARM_REG_R0, &r[0]);
-	uc_reg_read(e->uc, UC_ARM_REG_R1, &r[1]);
-	uc_reg_read(e->uc, UC_ARM_REG_R2, &r[2]);
-	uc_reg_read(e->uc, UC_ARM_REG_R3, &r[3]);
-	uc_reg_read(e->uc, UC_ARM_REG_R4, &r[4]);
-	uc_reg_read(e->uc, UC_ARM_REG_R5, &r[5]);
-	uc_reg_read(e->uc, UC_ARM_REG_LR, &lr);
-
-	log("%s() (lr=%08x)\n", syscall_name[sc_num], lr);
 }
 
 
