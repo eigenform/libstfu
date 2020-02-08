@@ -17,5 +17,6 @@ int starlet_load_boot0(starlet *emu, char *filename);
 int starlet_load_otp(starlet *e, char *filename);
 int starlet_load_seeprom(starlet *e, char *filename);
 int starlet_add_bp(starlet *e, u32 addr);
+int starlet_add_log(starlet *e, u32 addr);
 
 #endif // _STARLET_H

@@ -106,8 +106,8 @@ void __hook_log_code(uc_engine *uc, u64 addr, u32 size, starlet *emu)
 	uc_reg_read(uc, UC_ARM_REG_R12, &r[12]);
 
 	instr = vread32(uc, pc);
-	log("%08x: %08x\t [lr=%08x,sp=%08x,cpsr=%08x,r0=%08x,r1=%08x,r2=%08x,r3=%08x,r4=%08x,r5=%08x,r6=%08x,r7=%08x,r8=%08x,r9=%08x,r10=%08x,r11=%08x]\n",
-			pc,instr,lr,sp,cpsr,r[0],r[1], r[2],r[3],r[4],r[5],r[6], r[7],r[8],r[9],r[10],r[11]);
+	log("%08x: %08x\t [lr=%08x,sp=%08x,cpsr=%08x,r0=%08x]\n[r1=%08x,r2=%08x,r3=%08x,r4=%08x]\n[r5=%08x,r6=%08x,r7=%08x,r8=%08x]\n[r9=%08x,r10=%08x,r11=%08x,r12=%08x]\n\n",
+			pc,instr,lr,sp,cpsr,r[0],r[1], r[2],r[3],r[4],r[5],r[6], r[7],r[8],r[9],r[10],r[11],r[12]);
 }
 
 // __hook_halt()
@@ -186,6 +186,14 @@ void register_bp_hook(starlet *e, u32 addr)
 {
 	uc_hook x;
 	uc_hook_add(e->uc, &x, UC_HOOK_CODE, __hook_simple_bp, e,addr,addr);
+}
+
+// register_log_hook()
+// Register a log hook. 
+void register_log_hook(starlet *e, u32 addr)
+{
+	uc_hook x;
+	uc_hook_add(e->uc, &x,UC_HOOK_CODE,__hook_log_code, e, addr, addr);
 }
 
 // register_core_hooks()

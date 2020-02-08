@@ -506,6 +506,8 @@ int starlet_load_seeprom(starlet *e, char *filename)
 // Add a simple breakpoint.
 int starlet_add_bp(starlet *e, u32 addr) { register_bp_hook(e, addr); }
 
+int starlet_add_log(starlet *e, u32 addr) { register_log_hook(e, addr); }
+
 // starlet_run()
 // Start running a Starlet instance. The main loop is implemented here.
 #define LOOP_INSTRS 0x100
