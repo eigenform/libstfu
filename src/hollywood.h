@@ -98,7 +98,15 @@ enum arm_irq {
 #define HW_SRNPROT    		0x0d800060
 #define HW_BUSPROT   		0x0d800064
 
+#define HW_GPIO_ENABLE		0x0d8000dc
 #define HW_GPIO_OUT  		0x0d8000e0
+#define HW_GPIO_DIR  		0x0d8000e4
+#define HW_GPIO_IN   		0x0d8000e8
+#define HW_GPIO_INTLVL		0x0d8000ec
+#define HW_GPIO_INTSTS		0x0d8000f0
+#define HW_GPIO_INTEN		0x0d8000f4
+#define HW_GPIO_STRAPS		0x0d8000f8
+#define HW_GPIO_OWNER		0x0d8000fc
 
 //#define HW_AHB_			0x0d800100
 //#define HW_AHB_			0x0d800104

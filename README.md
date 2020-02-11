@@ -15,11 +15,13 @@ A summary of our goals is roughly:
 
 Linking against Unicorn allows us to [mostly] ignore details about actually
 emulating a CPU, and instead focus on properly emulating things that are
-particular to the platform. The implementation of various I/O features is
-guided by marcan's [and other Team Twiizers members'] implementation of
-various things in [skyeye-starlet](https://github.com/marcan/skyeye-starlet).
-This project will probably be _even hackier_ than `skyeye-starlet` for a long
-time.
+particular to the platform. 
+
+The implementation of various I/O features is guided by marcan's 
+[and other Team Twiizers members'] implementation of various things in 
+[skyeye-starlet](https://github.com/marcan/skyeye-starlet). This project will 
+probably be _even hackier_ than `skyeye-starlet` for a long time.
+
 
 ## Building
 You will probably need to build [Unicorn](https://github.com/unicorn-engine/unicorn)

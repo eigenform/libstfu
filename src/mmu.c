@@ -4,7 +4,9 @@
 #include "core_types.h"
 
 // init_mmu()
-// Initialize various memory mappings
+// Initialize various memory mappings.
+// These are "mappings" in the sense of "host-to-guest mappings."
+// All of these addresses are *physical* addresses.
 // UC_PROT_ALL=7
 int init_mmu(starlet *e)
 {

@@ -1,20 +1,26 @@
 #ifndef _CORE_TYPES_H
 #define _CORE_TYPES_H
 
-#include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
-
 #include <unicorn/unicorn.h>
+#include "generic_types.h"
 
-typedef uint8_t u8;
-typedef uint16_t u16;
-typedef uint32_t u32;
-typedef uint64_t u64;
-typedef int8_t s8;
-typedef int16_t s16;
-typedef int32_t s32;
-typedef int64_t s64;
+// Log message types
+#define MAX_ENTRY_LEN	0x100
+enum log_types {
+	DEBUG,
+	SYSTEM,
+	IOS,
+	SVC,
+	MMIO,
+	GPIO,
+	SEEPROM,
+	NAND,
+	SHA,
+	AES,
+	INTERRUPT,
+};
 
 
 /* Halt codes - these are meant to extend the space of Unicorn's uc_err enum.
@@ -74,7 +80,8 @@ enum state {
 
 
 /* These containers are used to hold the actual backing memory for Unicorn.
- * It's not clear if this is the best way to organize things.
+ * It's not clear yet if this is the best way to organize things.
+ * Note that these correspond to *physical memory* attached to the machine.
  */
 
 typedef struct sram
@@ -107,10 +114,12 @@ typedef struct iomem
 } iomem;
 
 typedef struct otpmem { u32 data[0x20]; } otpmem;
-typedef struct seeprom_mem { u16 data[0x80]; } seeprom_mem;
 
 
-/* Containers for the state of various I/O devices */
+/* Containers for the state of various I/O devices. 
+ * Some aspects of MMIO device state need to be managed outside of the actual
+ * backing memory we have allocated for them.
+ */
 
 typedef struct nand_interface
 {
@@ -120,14 +129,37 @@ typedef struct nand_interface
 } nand_interface;
 
 
-/* Top-level container describing an instance of the Starlet emulator. */
+typedef struct gpio
+{
+	u32 arm_out;
+} gpio;
+
+typedef struct seeprom
+{
+	u32 state;
+	u32 clock;
+	u32 count;
+	u32 bits_out;
+	u32 bits_in;
+	u32 address;
+	u32 opcode;
+	u16 data[0x80];		// Backing memory
+	u32 wren;
+} seeprom;
+
+
+/* Top-level container describing an instance of the Starlet emulator.
+ * This could probably be organized a little bit better.
+ */
 
 typedef struct starlet
 {
 	uc_engine *uc;		// Pointer to an instance of Unicorn
+
 	u32 timer;		// Hollywood timer
 	u32 interrupt;		// Pending system interrupt number 
 	u32 pending_irq;	// Pending IRQ bitmask (1=asserted)
+	u32 stepped;		// Are we attached to a debugger?
 
 	uc_hook halt_hook;	// Internal halt hook
 	uc_hook fixup_hook;	// Syscall fixup hook
@@ -139,13 +171,19 @@ typedef struct starlet
 
 	nand_interface nand;	// NAND controller interface
 	iomem iomem;		// MMIO backing memory
-
 	sram sram;		// SRAM backing memory
-
 	mram mram;		// Main RAM backing memory
 	otpmem otp;		// EFUSE/OTP backing memory
-	seeprom_mem seeprom;	// SEEPROM backing memory
+	seeprom seeprom;	// SEEPROM interface and backing memory
+	gpio gpio;		// GPIO state
+
+	void (*log_hook)(int type, char *entry);
 } starlet;
+
+
+extern const char *log_type_name[];
+extern void __log(starlet *e, int type, const char *fmt, ...);
+#define LOG(e, type, ...) do { __log(e, type, __VA_ARGS__); } while (0)
 
 
 #endif // _CORE_TYPES_H

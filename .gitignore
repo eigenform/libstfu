@@ -1,7 +1,9 @@
 *.bin
 *.elf
 *.o
+*.a
+*.so
 stfu
 stfui
 test-boot0
-test-boot
+test-boot1

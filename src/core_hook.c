@@ -157,12 +157,11 @@ bool __hook_insn_invalid(uc_engine *uc, starlet *e)
 void __hook_enter_boot1(uc_engine *uc, u64 addr, u32 size, starlet *emu)
 {
 	u32 val;
-	uc_reg_read(uc, UC_ARM_REG_PC, &val);
 	if (emu->state & STATE_BOOT0)
 	{
 		emu->state &= ~STATE_BOOT0;
 		emu->state |= STATE_BOOT1;
-		dbg("ENTERED BOOT1 at PC=%08x\n", val);
+		LOG(emu, SYSTEM, "Entered boot1");
 	}
 }
 
@@ -171,12 +170,11 @@ void __hook_enter_boot1(uc_engine *uc, u64 addr, u32 size, starlet *emu)
 void __hook_enter_boot2(uc_engine *uc, u64 addr, u32 size, starlet *emu)
 {
 	u32 val;
-	uc_reg_read(uc, UC_ARM_REG_PC, &val);
 	if (emu->state & STATE_BOOT1)
 	{
 		emu->state &= ~STATE_BOOT1;
 		emu->state |= STATE_BOOT2;
-		dbg("ENTERED BOOT2 at PC=%08x\n", val);
+		LOG(emu, SYSTEM, "Entered boot2");
 	}
 }
 

@@ -41,13 +41,6 @@ static bool __handle_irqs(starlet *e)
 
 	// If there's no IRQ to deal with, why are we even here?
 	assert(new_sts != 0);
-	//if (new_sts == 0)
-	//{	
-	//	dbg("No interrupt to service! pending=%08x, en=%08x\n",
-	//		e->pending_irq, en);
-	//	return true;
-	//}
-	
 
 	u32 regs[7];
 	u32 entry_pc, entry_lr, entry_cpsr, entry_sp, entry_spsr;
@@ -64,7 +57,7 @@ static bool __handle_irqs(starlet *e)
 	//		entry_pc, entry_lr, entry_sp, entry_cpsr, entry_spsr);
 
 	// Try to log whatever thread of execution is on-CPU
-	//log_context(entry_pc);
+	//log_context(e, entry_pc);
 
 
 	// Switch into the IRQ system mode
@@ -108,8 +101,10 @@ static bool __handle_irqs(starlet *e)
  */
 #define EXCEPTION_UNDEF		1
 #define EXCEPTION_SWI		2
-static char tmp_buf[0x10];
-static char svc_buf[0x1000];
+
+#define SVC_BUFLEN		0x10
+static char line_buf[SVC_BUFLEN];
+static char svc_buf[MAX_ENTRY_LEN];
 static u32 svc_buf_cur;
 static bool __handle_interrupt(starlet *e)
 {
@@ -121,16 +116,24 @@ static bool __handle_interrupt(starlet *e)
 	// In practice, the semihosting SVC call for writing NUL-terminated
 	// strings is the only one that occurs in IOSes that we care about.
 	case EXCEPTION_SWI:
+		// Read up to 16 bytes of string data
 		uc_reg_read(e->uc, UC_ARM_REG_R1, &r1);
-		uc_virtual_mem_read(e->uc, r1, &tmp_buf, 0x10);
-		slen = strnlen(tmp_buf, 0x0f);
-		strncpy(&svc_buf[svc_buf_cur], tmp_buf, slen);
+		uc_vmem_read(e->uc, r1, &line_buf, SVC_BUFLEN);
+
+		// Append to buffer
+		slen = strnlen(line_buf, SVC_BUFLEN-1);
+		strncpy(&svc_buf[svc_buf_cur], line_buf, slen);
 		svc_buf_cur += slen;
+
+		// If this particular write has a newline, flush buffer
 		for (int i = 0; i < slen; i++)
 		{
-			if (tmp_buf[i] == '\n')
+			if (line_buf[i] == '\n')
 			{
-				printf("%s", svc_buf);
+				char *pos;
+				if ((pos = strchr(svc_buf, '\n')) != NULL)
+					*pos = '\0';
+				LOG(e, SVC, svc_buf);
 				memset(svc_buf, 0, sizeof(svc_buf));
 				svc_buf_cur = 0;
 				break;
@@ -192,7 +195,7 @@ static bool __handle_syscall(starlet *e)
 	}
 
 	// Try to log whatever thread of execution is on-CPU
-	log_context(entry_pc);
+	log_context(e, entry_pc);
 
 	// Try to log the name of this syscall and arguments
 	sc_num = (instr & 0x00ffffe0) >> 5;
@@ -236,9 +239,13 @@ static bool __handle_halt_code(starlet *e)
 	// These halt codes are *always fatal*
 	if (e->halt_code < 0x10000)
 	{
-		uc_reg_read(e->uc, UC_ARM_REG_PC, &pc);
-		uc_reg_read(e->uc, UC_ARM_REG_LR, &lr);
-		dbg("halt_code=%08x, pc=%08x, lr=%08x\n", e->halt_code,pc,lr);
+		if (e->halt_code == HALT_UNIMPL)
+		{
+			uc_reg_read(e->uc, UC_ARM_REG_PC, &pc);
+			uc_reg_read(e->uc, UC_ARM_REG_LR, &lr);
+			dbg("unimpl instruction, pc=%08x, lr=%08x\n", 
+				e->halt_code,pc,lr);
+		}
 		return true;
 	}
 
@@ -255,7 +262,7 @@ static bool __handle_halt_code(starlet *e)
 		uc_reg_write(e->uc, UC_ARM_REG_PC, &lr);
 
 		uc_reg_read(e->uc, UC_ARM_REG_PC, &pc);
-		log_context(pc);
+		log_context(e, pc);
 		die = false;
 		break;
 	case HALT_IRQ_FIXUP:
@@ -274,7 +281,7 @@ static bool __handle_halt_code(starlet *e)
 		//dbg("post-fixup: PC=%08x, LR=%08x, SP=%08x\n", pc,lr,sp);
 		destroy_irq_fixup_hook(e, pc);
 
-		log_context(pc);
+		log_context(e, pc);
 		die = false;
 		break;
 	case HALT_INTERRUPT:
@@ -301,7 +308,72 @@ static bool __handle_halt_code(starlet *e)
 	return die;
 }
 
+// __run_unstepped()
+// "Non-stepped" (noninteractive) core emulator loop. 
+// Just emulate until we are forced to halt.
+static int __run_unstepped(starlet *emu)
+{
+	uc_err err;
+	u32 pc, cpsr;
+	bool should_halt;
 
+	// Do the main emulation loop; break out on errors
+	while (true)
+	{
+		// If the processor is in THUMB mode, fix the program counter.
+		uc_reg_read(emu->uc, UC_ARM_REG_PC, &pc);
+		uc_reg_read(emu->uc, UC_ARM_REG_CPSR, &cpsr);
+		if (cpsr & 0x20) pc |= 1;
+		uc_reg_write(emu->uc, UC_ARM_REG_PC, &pc);
+
+		// Emulate until we halt for some reason
+		err = uc_emu_start(emu->uc, pc, 0, 0, 0);
+
+		// Temporary: break out if we reach PC=0
+		uc_reg_read(emu->uc, UC_ARM_REG_PC, &pc);
+		if (pc == 0) break;
+
+		// Potentially handle some event depending on the halt code
+		if (err != UC_ERR_OK) emu->halt_code = err;
+		if (emu->halt_code != 0)
+		{
+			// Determine if we should break out the main loop
+			should_halt = __handle_halt_code(emu);
+
+			// Clear the current halt code after handling
+			emu->halt_code = 0;
+
+			// Break out of this loop if necessary
+			if (should_halt) break;
+		}
+	}
+}
+
+bool __run_stepped(starlet *emu, u32 steps)
+{
+	uc_err err;
+	u32 pc, cpsr;
+	bool should_halt;
+
+	// If the processor is in THUMB mode, fix the program counter.
+	uc_reg_read(emu->uc, UC_ARM_REG_PC, &pc);
+	uc_reg_read(emu->uc, UC_ARM_REG_CPSR, &cpsr);
+	if (cpsr & 0x20) pc |= 1;
+	uc_reg_write(emu->uc, UC_ARM_REG_PC, &pc);
+
+	// Emulate until we halt for some reason
+	err = uc_emu_start(emu->uc, pc, 0, 0, steps);
+	if (err != UC_ERR_OK) emu->halt_code = err;
+	if (emu->halt_code != 0)
+	{
+		// Determine if we should break out the main loop
+		should_halt = __handle_halt_code(emu);
+
+		// Clear the current halt code after handling
+		emu->halt_code = 0;
+	}
+	return should_halt;
+}
 
 /* ----------------------------------------------------------------------------
  * These are functions exposed to users linking against us.
@@ -311,17 +383,13 @@ static bool __handle_halt_code(starlet *e)
 // Destroy a Starlet instance.
 void starlet_destroy(starlet *emu)
 {
-	dbg("%s\n", "destroying instance ...");
-	FILE *fp;
-	fp = fopen("/tmp/mem1.bin", "wb");
-	fwrite(&emu->mram.mem1, 1, sizeof(emu->mram.mem1), fp);
-	fclose(fp);
-	fp = fopen("/tmp/mem2.bin", "wb");
-	fwrite(&emu->mram.mem2, 1, sizeof(emu->mram.mem2), fp);
-	fclose(fp);
+	LOG(emu, SYSTEM, "Instance destroyed");
 
+	// Close handle to Unicorn
 	uc_close(emu->uc);
-	if (emu->nand.data)
+
+	// Destroy everything we put on the heap
+	if (emu->nand.data) 
 		free(emu->nand.data);
 }
 
@@ -334,7 +402,7 @@ int starlet_init(starlet *emu)
 	err = uc_open(UC_ARCH_ARM, UC_STARLET_MODE, &emu->uc);
 	if (err)
 	{
-		printf("Couldn't create Unicorn instance\n");
+		LOG(emu, DEBUG, "Couldn't create Unicorn instance");
 		return -1;
 	}
 
@@ -343,7 +411,7 @@ int starlet_init(starlet *emu)
 	init_mmu(emu);
 	register_core_hooks(emu);
 	register_mmio_hooks(emu);
-	dbg("%s\n", "initialized instance");
+	LOG(emu, SYSTEM, "Initialized instance");
 }
 
 // starlet_halt()
@@ -368,7 +436,7 @@ int starlet_load_code(starlet *emu, char *filename, u64 addr)
 	size_t filesize = get_filesize(filename);
 	if (filesize == -1)
 	{
-		printf("Couldn't open %s\n", filename);
+		LOG(emu, DEBUG, "Couldn't open %s", filename);
 		return -1;
 	}
 
@@ -381,7 +449,7 @@ int starlet_load_code(starlet *emu, char *filename, u64 addr)
 	// Die if we can't read the whole file
 	if (bytes_read != filesize)
 	{
-		printf("Couldn't read all bytes in %s\n", filename);
+		LOG(emu, DEBUG, "Couldn't read all bytes in %s", filename);
 		free(data);
 		return -1;
 	}
@@ -409,12 +477,12 @@ int starlet_load_boot0(starlet *emu, char *filename)
 	size_t filesize = get_filesize(filename);
 	if (filesize == -1)
 	{
-		printf("Couldn't open %s\n", filename);
+		LOG(emu, DEBUG, "Couldn't open %s", filename);
 		return -1;
 	}
 	if (filesize != 0x2000)
 	{
-		printf("boot0 must be 0x2000 bytes, got %08x\n", filesize);
+		LOG(emu, DEBUG, "boot0 must be 0x2000 bytes, got %08x", filesize);
 		return -1;
 	}
 
@@ -427,7 +495,7 @@ int starlet_load_boot0(starlet *emu, char *filename)
 	// Die if we can't read the whole file
 	if (bytes_read != filesize)
 	{
-		printf("Couldn't read all bytes in %s\n", filename);
+		LOG(emu, DEBUG, "Couldn't read all bytes in %s", filename);
 		free(data);
 		return -1;
 	}
@@ -450,7 +518,7 @@ int starlet_load_nand_buffer(starlet *emu, void *buffer, u64 len)
 	u8 *buf = malloc(len);
 	if (!buf)
 	{
-		log("Couldn't allocate buffer %08x for NAND\n", len);
+		LOG(emu, DEBUG, "Couldn't allocate buffer %08x for NAND", len);
 		return -1;
 	}
 	emu->nand.data = buf;
@@ -471,7 +539,7 @@ int starlet_load_otp(starlet *e, char *filename)
 	size_t filesize = get_filesize(filename);
 	if (filesize == -1)
 	{
-		printf("Couldn't open %s\n", filename);
+		LOG(e, DEBUG, "Couldn't open %s", filename);
 		return -1;
 	}
 
@@ -493,11 +561,11 @@ int starlet_load_seeprom(starlet *e, char *filename)
 	size_t filesize = get_filesize(filename);
 	if (filesize == -1)
 	{
-		printf("Couldn't open %s\n", filename);
+		LOG(e, DEBUG, "Couldn't open %s", filename);
 		return -1;
 	}
 	fp = fopen(filename, "rb");
-	bytes_read = fread(&e->seeprom, 1, 0x100, fp);
+	bytes_read = fread(&e->seeprom.data, 1, 0x100, fp);
 	fclose(fp);
 	return 0;
 }
@@ -506,45 +574,24 @@ int starlet_load_seeprom(starlet *e, char *filename)
 // Add a simple breakpoint.
 int starlet_add_bp(starlet *e, u32 addr) { register_bp_hook(e, addr); }
 
+// starlet_add_log()
+// Add a simple hook to log register state when PC == addr.
 int starlet_add_log(starlet *e, u32 addr) { register_log_hook(e, addr); }
 
+
 // starlet_run()
-// Start running a Starlet instance. The main loop is implemented here.
-#define LOOP_INSTRS 0x100
+// Start running a Starlet instance in some mode (stepped, non-stepped).
 int starlet_run(starlet *emu)
 {
-	uc_err err;
-	u32 pc, cpsr;
-	bool should_halt;
+	int res; 
 
 	// Set the initial entrypoint
 	uc_reg_write(emu->uc, UC_ARM_REG_PC, &emu->entrypoint);
-	if (emu->state & STATE_BOOT0) dbg("%s\n", "ENTERED BOOT0");
+	if (emu->state & STATE_BOOT0)
+		LOG(emu, SYSTEM, "Entered boot0");
 
-	// Do the main emulation loop; break out on errors
-	while (true)
-	{
-		// If the processor is in THUMB mode, fix the program counter.
-		uc_reg_read(emu->uc, UC_ARM_REG_PC, &pc);
-		uc_reg_read(emu->uc, UC_ARM_REG_CPSR, &cpsr);
-		if (cpsr & 0x20) pc |= 1;
-		uc_reg_write(emu->uc, UC_ARM_REG_PC, &pc);
-
-		// Emulate until we halt for some reason
-		err = uc_emu_start(emu->uc, pc, 0, 0, 0);
-
-		// Temporary: break out if we reach PC=0
-		uc_reg_read(emu->uc, UC_ARM_REG_PC, &pc);
-		if (pc == 0) break;
-
-		// Potentially handle some event depending on the halt code
-		if (err != UC_ERR_OK) emu->halt_code = err;
-		if (emu->halt_code != 0)
-		{
-			should_halt = __handle_halt_code(emu);
-			emu->halt_code = 0;
-			if (should_halt) break;
-		}
-	}
+	// Just run until we terminate
+	res = __run_unstepped(emu);
+	return res;
 }
 

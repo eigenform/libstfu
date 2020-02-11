@@ -48,6 +48,7 @@ enum ctx_name_idx {
 	CTX_KBD,
 	CTX_SSL,
 	CTX_KERNEL,
+	CTX_IOSC,
 	CTX_UNK,
 };
 
@@ -69,6 +70,7 @@ const char *ctx_name[] = {
 	"KBD",
 	"SSL",
 	"KERNEL",
+	"IOSC",
 	"UNK",
 };
 
@@ -78,46 +80,46 @@ const char *ctx_name[] = {
 
 void ios_log_default(starlet *e, struct r_ctx *ctx)
 {
-	log("%s() (lr=%08x)\n", ctx->name, ctx->lr);
+	LOG(e, IOS, "%s() (lr=%08x)", ctx->name, ctx->lr);
 }
 
 void ios_log_mq_op(starlet *e, struct r_ctx *ctx)
 {
-	log("%s(%d, 0x%08x, 0x%08x) (lr=%08x)\n", ctx->name, ctx->r[0], 
-		ctx->r[1], ctx->r[2], ctx->lr);
+	LOG(e, IOS, "%s(%d, 0x%08x, 0x%08x) (lr=%08x)", 
+		ctx->name, ctx->r[0], ctx->r[1], ctx->r[2], ctx->lr);
 }
 
 void ios_thread_create(starlet *e, struct r_ctx *ctx)
 {
-	log("%s(0x%08x, 0x%08x, 0x%08x, 0x%08x, %d, %d) (lr=%08x)\n", 
+	LOG(e, IOS, "%s(0x%08x, 0x%08x, 0x%08x, 0x%08x, %d, %d) (lr=%08x)", 
 		ctx->name, ctx->r[0], ctx->r[1], ctx->r[2], ctx->r[3], 
 		ctx->r[4], ctx->r[5], ctx->lr);
 }
 void ios_thread_cancel(starlet *e, struct r_ctx *ctx)
 {
-	log("%s(%d, 0x%08x) (lr=%08x)\n", ctx->name, 
+	LOG(e, IOS, "%s(%d, 0x%08x) (lr=%08x)", ctx->name, 
 		ctx->r[0], ctx->r[1], ctx->lr);
 }
 void ios_timer_create(starlet *e, struct r_ctx *ctx)
 {
-	log("%s(%d, %d, %d, 0x%08x) (lr=%08x)\n", ctx->name, 
+	LOG(e, IOS, "%s(%d, %d, %d, 0x%08x) (lr=%08x)", ctx->name, 
 		ctx->r[0], ctx->r[1], ctx->r[2], ctx->r[3], ctx->lr);
 }
 void ios_heap_alloc(starlet *e, struct r_ctx *ctx)
 {
-	log("%s(%d, 0x%08x) (lr=%08x)\n", ctx->name, 
+	LOG(e, IOS, "%s(%d, 0x%08x) (lr=%08x)", ctx->name, 
 		ctx->r[0], ctx->r[1], ctx->lr);
 }
 void ios_log_str_int(starlet *e, struct r_ctx *ctx)
 {
-	uc_virtual_mem_read(e->uc, ctx->r[0], strbuf, 0x100);
-	log("%s(\"%s\", %d) (lr=%08x)\n", ctx->name, 
+	uc_vmem_read(e->uc, ctx->r[0], strbuf, 0x100);
+	LOG(e, IOS, "%s(\"%s\", %d) (lr=%08x)", ctx->name, 
 		strbuf, ctx->r[1], ctx->lr);
 }
 
 void ios_log_int(starlet *e, struct r_ctx *ctx)
 {
-	log("%s(%d) (lr=%08x)\n", ctx->name, ctx->r[0], ctx->lr);
+	LOG(e, IOS, "%s(%d) (lr=%08x)", ctx->name, ctx->r[0], ctx->lr);
 }
 
 // Table of syscalls.
@@ -253,6 +255,7 @@ const struct syscall_info syscall_table[0x80] = {
 static int get_ctx_name_idx(u32 pc)
 {
 	switch (pc >> 16) {
+	case 0x1386: return CTX_IOSC;
 	case 0x2000: return CTX_FS;
 	case 0x2010: return CTX_ES;
 	case 0x2020: return CTX_DIP;
@@ -267,13 +270,13 @@ static int get_ctx_name_idx(u32 pc)
 // log_context()
 // Given some PC, log some information about the current context.
 static int last_ctx_idx = -1;
-void log_context(u32 pc)
+void log_context(starlet *e, u32 pc)
 {
 	int ctx_name_idx = get_ctx_name_idx(pc);
 	if (last_ctx_idx != ctx_name_idx)
 	{
-		log("STFU ----------NOW RUNNING IN %s CONTEXT--------------\n",
-				ctx_name[ctx_name_idx]);
+		LOG(e, SYSTEM, "Entered %s context, pc=%08x", 
+			ctx_name[ctx_name_idx], pc);
 		last_ctx_idx = ctx_name_idx;
 	}
 }

@@ -21,7 +21,6 @@ int main(void)
 	// Initialize the emulator
 	starlet_init(&emu);
 
-
 	// Read a NAND dump into memory
 	size_t nand_size = get_filesize("nand.bin");
 	if (nand_size == -1)

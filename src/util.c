@@ -100,6 +100,6 @@ void write16(uc_engine *uc, u32 addr, u16 val)
 u32 vread32(uc_engine *uc, u32 addr)
 {
 	u32 val;
-	uc_virtual_mem_read(uc, addr, &val, 4);
+	uc_vmem_read(uc, addr, &val, 4);
 	return htobe32(val);
 }

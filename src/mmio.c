@@ -50,8 +50,8 @@ void nand_dma_write(starlet *e, u32 flags, u32 len)
 	memcpy(nand_buf, &e->nand.data[nand_off], len);
 
 	uc_reg_read(e->uc, UC_ARM_REG_PC, &pc);
-	log("NAND dma page=%08x data=%08x ecc=%08x len=%08x (pc=%08x)\n", 
-			addr2, data_addr, ecc_addr, len, pc);
+	LOG(e, NAND, "DMA pg=%08x data=%08x ecc=%08x len=%08x",
+			addr2, data_addr, ecc_addr, len);
 
 	if (len == 0x800)
 	{
@@ -122,7 +122,7 @@ void handle_nand_command(starlet *e, s64 ctrl)
 
 	// Die on unimplemented commands
 	default: 
-		dbg("NAND unimplemented command %02x\n", cmd);
+		LOG(e, DEBUG, "NAND unimplemented command %02x", cmd);
 		e->halt_code = HALT_UNIMPL;
 		uc_emu_stop(e->uc);
 		break;
@@ -212,7 +212,7 @@ static void handle_aes_command(starlet *e, s64 value)
 	//uc_virtual_mem_read(e->uc, src_addr, aes_src_buf, len);
 	uc_mem_read(e->uc, src_addr, aes_src_buf, len);
 
-	log("AES\t dma on %08x, len=%08x\n", dst_addr, len);
+	LOG(e, AES, "DMA dst=%08x len=%08x", dst_addr, len);
 
 	if (use_aes)
 	{
@@ -329,7 +329,7 @@ static void handle_sha_command(starlet *e, s64 value)
 	//uc_virtual_mem_read(e->uc, src_addr, sha_buf, len);
 	uc_mem_read(e->uc, src_addr, sha_buf, len);
 
-	log("SHA\t addr=%08x, len=%08x\n", src_addr, len);
+	LOG(e, SHA, "DIGEST src=%08x len=%08x", src_addr, len);
 	SHA1Input(&sha_ctx, sha_buf, len);
 
 	write32(e->uc, SHA_SRC, src_addr + len);
@@ -397,7 +397,284 @@ static bool __mmio_sha(uc_engine *uc, uc_mem_type type, u64 address,
 
 
 // ----------------------------------------------------------------------------
+// This is based entirely on marcan's state machine in skyeye-starlet. 
+//
+// All of the inlined functions are just for avoid unnecessary horizontal 
+// space and making "how this works" a little bit more obvious:
 
+// The current SEEPROM state
+enum seeprom_state {
+	ST_BUSY		= -1,
+	ST_START	= 0,
+	ST_OPCODE	= 1,
+	ST_ADDRESS	= 2,
+	ST_LAST		= 3,
+};
+
+// SEEPROM opcodes
+enum seeprom_opcode {
+	PROM_SPECIAL	= 0,
+	PROM_WRITE	= 1,
+	PROM_READ	= 2,
+	PROM_ERASE	= 3,
+};
+
+// SEEPROM sub-opcodes
+enum seeprom_subop {
+	PROM_WRDIS	= 0,
+	PROM_WRALL	= 1,
+	PROM_ERALL	= 2,
+	PROM_WREN	= 3,
+};
+
+
+// seeprom_state_clear()
+// Clear SEEPROM state (nothing is happening).
+static inline void seeprom_state_clear(starlet *e)
+{
+	e->seeprom.clock = 0;
+	e->seeprom.state = 0;
+	e->seeprom.bits_out = 0;
+	e->seeprom.bits_in = 0;
+	e->seeprom.count = 1;
+	e->seeprom.address = 0;
+}
+
+// seeprom_state_busy()
+// Wait for a cycle.
+static inline void seeprom_state_busy(starlet *e) { e->seeprom.count = 1; }
+
+// seeprom_set_busy()
+// Transition to the BUSY state.
+static inline void seeprom_set_busy(starlet *e)
+{
+	e->seeprom.count = 1;
+	e->seeprom.state = ST_BUSY;
+}
+
+// seeprom_set_last()
+// Transition to the LAST state.
+static inline void seeprom_set_last(starlet *e)
+{
+	e->seeprom.count = 16;
+	e->seeprom.state = ST_LAST;
+}
+
+// seeprom_delay_write()
+// On catching a WRITE command, delay until the LAST state.
+static inline void seeprom_delay_write(starlet *e)
+{
+	if (!e->seeprom.wren) seeprom_set_busy(e);
+	else seeprom_set_last(e);
+}
+
+// seeprom_delay_wrall()
+// On catching a WRALL command, delay until the LAST state.
+static inline void seeprom_delay_wrall(starlet *e)
+{
+	if (!e->seeprom.wren) seeprom_set_busy(e);
+	else seeprom_set_last(e);
+}
+
+// seeprom_state_start()
+// Schedule transition to the OPCODE state.
+static inline void seeprom_state_start(starlet *e)
+{
+	if (e->seeprom.bits_in != 1)
+	{
+		e->seeprom.bits_out = 1;
+		seeprom_set_busy(e);
+	}
+	else
+	{
+		e->seeprom.count = 2;
+		e->seeprom.state = ST_OPCODE;
+	}
+}
+
+// seeprom_state_opcode()
+// Read an opcode, schedule transition to the ADDRESS state.
+static inline void seeprom_state_opcode(starlet *e)
+{
+	e->seeprom.opcode = e->seeprom.bits_in;
+	e->seeprom.count = 8;
+	e->seeprom.state = ST_ADDRESS;
+}
+
+// seeprom_wrall()
+// Write all bytes in the SEEPROM.
+static inline void seeprom_wrall(starlet *e)
+{
+	for (int i = 0; i < 0x80; i++)
+		e->seeprom.data[i] = e->seeprom.bits_in;
+}
+
+// seeprom_set_wren()
+// Set the write-enable bit.
+static inline void seeprom_set_wren(starlet *e, u32 en)
+{
+	e->seeprom.wren = en;
+	seeprom_set_busy(e);
+}
+
+// seeprom_erall()
+// Erase all bytes in the SEEPROM.
+static inline void seeprom_erall(starlet *e)
+{
+	if (e->seeprom.wren)
+		memset(e->seeprom.data, 0, 0x100);
+	seeprom_set_busy(e);
+}
+
+// seeprom_read()
+// Read a 16-bit word from the SEEPROM.
+static inline void seeprom_read(starlet *e)
+{
+	e->seeprom.bits_out = htobe16(e->seeprom.data[e->seeprom.address & 0x7f]);
+	seeprom_set_last(e);
+}
+
+// seeprom_write()
+// Write a 16-bit word to the SEEPROM.
+static inline void seeprom_write(starlet *e)
+{
+	e->seeprom.data[e->seeprom.address & 0x7f] = htobe16(e->seeprom.bits_in);
+	
+}
+
+// seeprom_erase()
+// Erase a 16-bit word in the SEEPROM.
+static inline void seeprom_erase(starlet *e)
+{
+	if (e->seeprom.wren)
+		e->seeprom.data[e->seeprom.address & 0x7f] = 0x0000;
+	seeprom_set_busy(e);
+}
+
+// seeprom_change_state()
+// Main function for managing this state machine over time.
+static void seeprom_change_state(starlet *e, u32 gpio_out)
+{
+	switch (e->seeprom.state) {
+	case ST_BUSY: 
+		//LOG(e, SEEPROM, "SEEPROM BUSY");
+		seeprom_state_busy(e);
+		break;
+	case ST_START: 
+		//LOG(e, SEEPROM, "SEEPROM START");
+		seeprom_state_start(e);
+		break;
+	case ST_OPCODE: 
+		//LOG(e, SEEPROM, "SEEPROM OPCODE");
+		seeprom_state_opcode(e);
+		break;
+	case ST_ADDRESS:
+		//LOG(e, SEEPROM, "SEEPROM ADDRESS");
+		e->seeprom.address = e->seeprom.bits_in;
+		switch (e->seeprom.opcode) {
+		case PROM_READ: seeprom_read(e); break;
+		case PROM_WRITE: seeprom_delay_write(e); break;
+		case PROM_ERASE: seeprom_erase(e); break;
+		case PROM_SPECIAL:
+			switch (e->seeprom.address >> 6) {
+			case PROM_WREN: seeprom_set_wren(e, 1); break;
+			case PROM_WRDIS: seeprom_set_wren(e, 0); break;
+			case PROM_WRALL: seeprom_delay_wrall(e); break;
+			case PROM_ERALL: seeprom_erall(e); break;
+			}
+			break;
+		}
+		break;
+	case ST_LAST:
+		//LOG(e, SEEPROM, "SEEPROM LAST");
+		switch (e->seeprom.opcode) {
+		case PROM_SPECIAL: seeprom_wrall(e); break;
+		case PROM_WRITE: seeprom_write(e); break;
+		}
+		seeprom_set_busy(e);
+	}
+}
+
+// handle_seeprom()
+//
+static void handle_seeprom(starlet *e, u32 gpio_out)
+{
+	// When chip select is low
+	if (!(gpio_out & 0x400))
+		seeprom_state_clear(e);
+
+	// When chip select is high AND we're on the rising edge of the clock
+	else if ((gpio_out & 0x800) && !e->seeprom.clock)
+	{
+		e->seeprom.count--;
+		e->seeprom.bits_in = (e->seeprom.bits_in << 1) | 
+			((gpio_out & 0x00001000) ? 1:0);
+
+		u32 tmp = read32(e->uc, HW_GPIO_IN);
+		if (e->seeprom.bits_out & (1 << e->seeprom.count))
+			write32(e->uc, HW_GPIO_IN, tmp | 0x00002000);
+		else
+			write32(e->uc, HW_GPIO_IN, tmp & ~0x00002000);
+
+		if (e->seeprom.count == 0)
+		{
+			seeprom_change_state(e, gpio_out);
+			e->seeprom.bits_in = 0;
+		}
+		e->seeprom.clock = gpio_out & 0x00000800;
+	}
+}
+
+// __mmio_gpio()
+// GPIO MMIO handler
+static u32 g_gpio_out;
+static bool __mmio_gpio(uc_engine *uc, uc_mem_type type, u64 address,
+	int size, s64 value, starlet *e)
+{
+	u32 tmp;
+	u32 diff;
+	if (type == UC_MEM_READ)
+	{
+		switch (address) {
+		case HW_GPIO_IN:
+		default: 
+			break;
+		}
+	}
+	else if (type == UC_MEM_WRITE)
+	{
+		switch (address) {
+		case HW_GPIO_OUT:
+			tmp = read32(uc, HW_GPIO_OUT);
+			diff = tmp ^ value;
+
+			// Just log debug GPIO writes
+			if (diff & 0x00ff0000)
+				LOG(e, GPIO, "DEBUG %02x", (value >> 16) & 0xff);
+
+			// Deal with SEEPROM writes
+			if (diff & 0x00001c00)
+			{
+				handle_seeprom(e, value);
+			}
+			break;
+
+		case HW_GPIO_ENABLE:
+		case HW_GPIO_DIR:
+		case HW_GPIO_IN:
+		case HW_GPIO_INTLVL:
+		case HW_GPIO_INTSTS:
+		case HW_GPIO_INTEN:
+		case HW_GPIO_STRAPS:
+		case HW_GPIO_OWNER:
+		default:
+			break;
+		}
+	}
+}
+
+
+// ----------------------------------------------------------------------------
 
 // __mmio_hlwd()
 // Hollywood register MMIO handler
@@ -413,19 +690,19 @@ static bool __mmio_hlwd(uc_engine *uc, uc_mem_type type, u64 address,
 		// Update the timer before every read.
 		// Not clear if this actually affects performance or accuracy.
 		case HW_TIMER:
-			tmp = read32(uc, HW_TIMER);
-			write32(uc, HW_TIMER, tmp + 100);
-			dbg("HW_TIMER=%08x\n", tmp+5);
+			tmp = read32(uc, HW_TIMER) + 100 ;
+			write32(uc, HW_TIMER, tmp);
+			//dbg("HW_TIMER=%08x\n", tmp);
 			break;
 
 		case HW_ALARM:
-			dbg("%s\n", "HW_ALARM read");
+			//dbg("%s\n", "HW_ALARM read");
 			break;
 
 		// We use e->arm_int_sts to keep the actual value of this
 		// register because guest writes will clear bits
 		case HW_ARM_INTSTS:
-			//log("%s\n", "INT ARM_INTSTS read");
+			LOG(e, INTERRUPT, "ARM_INTSTS read");
 			tmp = read32(uc, HW_ARM_INTEN);
 			write32(uc, HW_ARM_INTSTS, e->pending_irq & tmp);
 			break;
@@ -433,7 +710,6 @@ static bool __mmio_hlwd(uc_engine *uc, uc_mem_type type, u64 address,
 		case EFUSE_ADDR:
 			// Clear the busy bit every time someone reads
 			tmp = read32(uc, EFUSE_ADDR);
-			//dbg("EFUSE_ADDR cleared with %08x\n", tmp & 0x7fffffff);
 			write32(uc, EFUSE_ADDR, tmp & 0x7fffffff);
 			break;
 
@@ -446,14 +722,14 @@ static bool __mmio_hlwd(uc_engine *uc, uc_mem_type type, u64 address,
 	{
 		switch (address) {
 		case HW_TIMER:
-			dbg("HW_TIMER write %08x\n", value);
+			//dbg("HW_TIMER write %08x\n", value);
 			break;
 		case HW_ALARM:
-			dbg("HW_ALARM write %08x\n", value);
+			//dbg("HW_ALARM write %08x\n", value);
 			break;
 
 		case HW_ARM_INTSTS:
-			//log("INT\t Cleared bits %08x on ARM_INTSTS\n", value);
+			LOG(e, INTERRUPT, "Cleared %08x on ARM_INTSTS", value);
 			e->pending_irq = (e->pending_irq & ~value);
 			break;
 
@@ -461,12 +737,13 @@ static bool __mmio_hlwd(uc_engine *uc, uc_mem_type type, u64 address,
 			// Enable the SRAM mirror
 			if ((value & 0x20) && !(e->state & STATE_SRAM_MIRROR_ON))
 			{
-				log("%s\n", "HLWD Turned SRAM mirror ON");
+				LOG(e, SYSTEM, "SRAM mirror ON");
 				e->state |= STATE_SRAM_MIRROR_ON;
 				e->halt_code = HALT_BROM_ON_TO_SRAM_ON;
 				register_halt_hook(e, HALT_BROM_ON_TO_SRAM_ON);
 			}
 			break;
+
 		case HW_SPARE0:
 			// Deal with this unknown AHB flush-related bit
 			if ((value & 0x10000) == 0)
@@ -484,7 +761,7 @@ static bool __mmio_hlwd(uc_engine *uc, uc_mem_type type, u64 address,
 			// Unmap the boot ROM
 			if ((value & 0x1000) && (e->state & STATE_BROM_MAP_ON))
 			{
-				log("%s\n", "HLWD BROM unmapped");
+				LOG(e, SYSTEM, "BROM unmapped");
 				e->state &= ~STATE_BROM_MAP_ON;
 				e->halt_code = HALT_SRAM_ON_TO_BROM_OFF;
 				register_halt_hook(e, HALT_SRAM_ON_TO_BROM_OFF);
@@ -548,7 +825,13 @@ int register_mmio_hooks(starlet *e)
 	uc_hook_add(e->uc,&x,MMIO_HOOK,__mmio_nand,e, 0x0d010000, 0x0d010020);
 	uc_hook_add(e->uc,&x,MMIO_HOOK,__mmio_aes,e,  0x0d020000, 0x0d020020);
 	uc_hook_add(e->uc,&x,MMIO_HOOK,__mmio_sha,e,  0x0d030000, 0x0d030040);
-	uc_hook_add(e->uc,&x,MMIO_HOOK,__mmio_hlwd,e, 0x0d800000, 0x0d800220);
+
+	//uc_hook_add(e->uc,&x,MMIO_HOOK,__mmio_hlwd,e, 0x0d800000, 0x0d800220);
+
+	uc_hook_add(e->uc,&x,MMIO_HOOK,__mmio_hlwd,e, 0x0d800000, 0x0d8000bc);
+	uc_hook_add(e->uc,&x,MMIO_HOOK,__mmio_gpio,e, 0x0d8000c0, 0x0d8000fc);
+	uc_hook_add(e->uc,&x,MMIO_HOOK,__mmio_hlwd,e, 0x0d800100, 0x0d800220);
+
 	uc_hook_add(e->uc,&x,MMIO_HOOK,__mmio_ddr,e,  0x0d8b4200, 0x0d8b4300);
 
 	return 0; 
