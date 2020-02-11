@@ -132,6 +132,7 @@ typedef struct nand_interface
 typedef struct gpio
 {
 	u32 arm_out;
+	u32 arm_in;
 } gpio;
 
 typedef struct seeprom

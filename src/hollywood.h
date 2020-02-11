@@ -43,7 +43,7 @@ enum arm_irq {
 	IRQ_ARMIPC	= 0x80000000,
 };
 
-#define MMIO_BUSY_BIT		0x80000000
+// ----------------------------------------------------------------------------
 
 // NAND controller
 #define NAND_CTRL		0x0d010000
@@ -100,11 +100,11 @@ enum arm_irq {
 
 #define HW_GPIO_ENABLE		0x0d8000dc
 #define HW_GPIO_OUT  		0x0d8000e0
-#define HW_GPIO_DIR  		0x0d8000e4
+#define HW_GPIO_OUT_ENABLE 	0x0d8000e4
 #define HW_GPIO_IN   		0x0d8000e8
-#define HW_GPIO_INTLVL		0x0d8000ec
-#define HW_GPIO_INTSTS		0x0d8000f0
-#define HW_GPIO_INTEN		0x0d8000f4
+#define HW_GPIO_INT_POLARITY	0x0d8000ec
+#define HW_GPIO_INT_STATUS	0x0d8000f0
+#define HW_GPIO_INT_ENABLE	0x0d8000f4
 #define HW_GPIO_STRAPS		0x0d8000f8
 #define HW_GPIO_OWNER		0x0d8000fc
 
@@ -138,5 +138,39 @@ enum arm_irq {
 #define DDR_PROT_DDR_END 	0x0d8b420e
 #define DDR_AHMFLUSH		0x0d8b4228
 #define DDR_AHMFLUSH_ACK 	0x0d8b422a
+
+// ----------------------------------------------------------------------------
+
+#define GPIO_POWER		0x00000001
+#define GPIO_SHUTDOWN		0x00000002
+#define GPIO_FAN		0x00000004
+#define GPIO_DCDC		0x00000008
+
+#define GPIO_DI_SPIN		0x00000010
+#define GPIO_SLOT_LED		0x00000020
+#define GPIO_EJECT_BUTTON	0x00000040
+#define GPIO_SLOT_IN		0x00000080
+
+#define GPIO_SENSOR_BAR		0x00000100
+#define GPIO_DO_EJECT		0x00000200
+#define GPIO_SEEPROM_CS		0x00000400
+#define GPIO_SEEPROM_CLK	0x00000800
+
+#define GPIO_SEEPROM_MOSI	0x00001000
+#define GPIO_SEEPROM_MISO	0x00002000
+#define GPIO_AVE_SCL		0x00004000
+#define GPIO_AVE_SDA		0x00008000
+
+#define GPIO_DEBUG0		0x00010000
+#define GPIO_DEBUG1		0x00020000
+#define GPIO_DEBUG2		0x00040000
+#define GPIO_DEBUG3		0x00080000
+
+#define GPIO_DEBUG4		0x00100000
+#define GPIO_DEBUG5		0x00200000
+#define GPIO_DEBUG6		0x00400000
+#define GPIO_DEBUG7		0x00800000
+
+#define GPIO_DEBUG_PINS		0x00ff0000
 
 #endif // _HOLLYWOOD_H
