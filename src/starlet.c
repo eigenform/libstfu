@@ -26,75 +26,6 @@
  */
 
 
-/* __handle_irqs()
- * Upstream Unicorn doesn't seem to have any way to fire an IRQ.
- * For now, we instead need to halt and manually move execution into the
- * exception vector for IRQs.
- * Returns 'true' if we should halt fatally.
- */
-static u32 irq_fixup_cpsr;
-static bool __handle_irqs(starlet *e)
-{
-	u32 en = read32(e->uc, HW_ARM_INTEN);
-	u32 new_sts = e->pending_irq & en;
-	write32(e->uc, HW_ARM_INTSTS, new_sts);
-
-	// If there's no IRQ to deal with, why are we even here?
-	assert(new_sts != 0);
-
-	u32 regs[7];
-	u32 entry_pc, entry_lr, entry_cpsr, entry_sp, entry_spsr;
-	u32 irq_pc, irq_lr, irq_cpsr, irq_sp, irq_spsr;
-
-	// Get the state before taking the exception
-	uc_reg_read(e->uc, UC_ARM_REG_PC, &entry_pc);
-	uc_reg_read(e->uc, UC_ARM_REG_SP, &entry_sp);
-	uc_reg_read(e->uc, UC_ARM_REG_LR, &entry_lr);
-	uc_reg_read(e->uc, UC_ARM_REG_CPSR, &entry_cpsr);
-	uc_reg_read(e->uc, UC_ARM_REG_SPSR, &entry_spsr);
-	
-	//dbg("pre-irq: pc=%08x, lr=%08x, sp=%08x, cpsr=%08x, spsr=%08x\n",
-	//		entry_pc, entry_lr, entry_sp, entry_cpsr, entry_spsr);
-
-	// Try to log whatever thread of execution is on-CPU
-	//log_context(e, entry_pc);
-
-
-	// Switch into the IRQ system mode
-	irq_cpsr = (entry_cpsr & 0xffffffe0) | 0x12;
-	irq_cpsr &= ~0x20; 
-	irq_cpsr |= 0x80;
-	uc_reg_write(e->uc, UC_ARM_REG_CPSR, &irq_cpsr);
-
-	// Save the old CPSR in SPSR_irq
-	uc_reg_write(e->uc, UC_ARM_REG_SPSR, &entry_cpsr);
-	irq_fixup_cpsr = entry_cpsr;
-
-	// Put the old PC in r14_irq (does the handler code subtract 4?)
-	irq_lr = entry_pc + 4;
-	uc_reg_write(e->uc, UC_ARM_REG_LR, &irq_lr);
-	//dbg("Set IRQ fixup to PC=%08x\n", entry_pc);
-	register_irq_fixup_hook(e, entry_pc);
-
-	// Set PC to the irq vector
-	irq_pc = 0xffff0018;
-	uc_reg_write(e->uc, UC_ARM_REG_PC, &irq_pc);
-
-	// Get the state before taking the exception
-	uc_reg_read(e->uc, UC_ARM_REG_PC, &irq_pc);
-	uc_reg_read(e->uc, UC_ARM_REG_SP, &irq_sp);
-	uc_reg_read(e->uc, UC_ARM_REG_LR, &irq_lr);
-	uc_reg_read(e->uc, UC_ARM_REG_CPSR, &irq_cpsr);
-	uc_reg_read(e->uc, UC_ARM_REG_SPSR, &irq_spsr);
-	
-	//dbg("pre-irq: pc=%08x, lr=%08x, sp=%08x, cpsr=%08x, spsr=%08x\n",
-	//		irq_pc, irq_lr, irq_sp, irq_cpsr, irq_spsr);
-
-
-	return false;
-}
-
-
 /* __handle_interrupt()
  * Deals with some pending interrupt.
  * Returns 'true' if we halt fatally.
@@ -165,66 +96,6 @@ static bool __handle_interrupt(starlet *e)
 }
 
 
-
-/* __handle_syscall()
- * Handle an IOS syscall.
- * Returns 'true' if we need to fatally halt in the main loop.
- */
-static u32 undef_fixup_cpsr;
-static bool __handle_syscall(starlet *e)
-{
-	u32 regs[7];
-	u32 instr, sc_num;
-	u32 entry_pc, entry_lr, entry_cpsr, entry_sp, entry_spsr;
-	u32 undef_pc, undef_lr, undef_cpsr, undef_sp, undef_spsr;
-
-	// Get the state before taking the exception
-	uc_reg_read(e->uc, UC_ARM_REG_PC, &entry_pc);
-	uc_reg_read(e->uc, UC_ARM_REG_SP, &entry_sp);
-	uc_reg_read(e->uc, UC_ARM_REG_LR, &entry_lr);
-	uc_reg_read(e->uc, UC_ARM_REG_CPSR, &entry_cpsr);
-	uc_reg_read(e->uc, UC_ARM_REG_SPSR, &entry_spsr);
-
-	// FIXME: Accuracy here is *always* entering the undef vector.
-	// If this instruction isn't a syscall, just signal a fatal halt
-	instr = vread32(e->uc, entry_pc);
-	if ((instr & 0xe6000000) != 0xe6000000)
-	{
-		dbg("Got bad instruction %08x at PC=%08x\n", instr, entry_pc);
-		return true;
-	}
-
-	// Try to log whatever thread of execution is on-CPU
-	log_context(e, entry_pc);
-
-	// Try to log the name of this syscall and arguments
-	sc_num = (instr & 0x00ffffe0) >> 5;
-	log_syscall(e, sc_num);
-
-	// Write new CPSR, switching into the undef system mode
-	undef_cpsr = (entry_cpsr & 0xffffffe0) | 0x1b;
-	undef_cpsr &= ~0x20; 
-	undef_cpsr |= 0x80;
-	uc_reg_write(e->uc, UC_ARM_REG_CPSR, &undef_cpsr);
-
-	// Save the old CPSR in SPSR_undef
-	uc_reg_write(e->uc, UC_ARM_REG_SPSR, &entry_cpsr);
-	undef_fixup_cpsr = entry_cpsr;
-
-	// Treat undef instruction like a branch+link, put PC+4 in LR_undef
-	undef_lr = entry_pc + 4;
-	uc_reg_write(e->uc, UC_ARM_REG_LR, &undef_lr);
-
-	// Register a post-syscall hook to fix up state.
-	// FIXME: Need to figure out a better solution to this.
-	register_syscall_fixup_hook(e, undef_lr);
-
-	// Set PC to the undef vector, then resume execution!
-	undef_pc = 0xffff0004;
-	uc_reg_write(e->uc, UC_ARM_REG_PC, &undef_pc);
-	return false;
-}
-
 /* __handle_halt_code()
  * Deal with halt codes, which either (a) indicate a Unicorn exception, or (b)
  * are used to implement some other feature that requires halting emulation.
@@ -236,59 +107,18 @@ static bool __handle_halt_code(starlet *e)
 	u32 lr, pc, cpsr, sp, r0;
 	bool die = true;
 
-	// These halt codes are *always fatal*
+	// Fatal halt codes (stop our main emulation loop)
 	if (e->halt_code < 0x10000)
 	{
 		if (e->halt_code == HALT_UNIMPL)
-		{
-			uc_reg_read(e->uc, UC_ARM_REG_PC, &pc);
-			uc_reg_read(e->uc, UC_ARM_REG_LR, &lr);
-			dbg("unimpl instruction, pc=%08x, lr=%08x\n", 
-				e->halt_code,pc,lr);
-		}
+			LOG(e, DEBUG, "Unimplemented feature");
 		return true;
 	}
 
-	// Handle halt cases that emulate core functionality
+	// Handle halt cases that emulate some core functionality
 	switch (e->halt_code) {
-	case HALT_INSN_INVALID:
-		die = __handle_syscall(e);
-		break;
-	case HALT_SYSCALL_FIXUP:
-		// FIXME: We just jump right to the LR; is this correct?
-		// Restore the old cpsr (before we took the exception)
-		uc_reg_write(e->uc, UC_ARM_REG_CPSR, &undef_fixup_cpsr);
-		uc_reg_read(e->uc, UC_ARM_REG_LR, &lr);
-		uc_reg_write(e->uc, UC_ARM_REG_PC, &lr);
-
-		uc_reg_read(e->uc, UC_ARM_REG_PC, &pc);
-		log_context(e, pc);
-		die = false;
-		break;
-	case HALT_IRQ_FIXUP:
-		// When returning from the IRQ handler, this PC is correct
-		uc_reg_read(e->uc, UC_ARM_REG_PC, &pc);
-		uc_reg_read(e->uc, UC_ARM_REG_LR, &lr);
-		uc_reg_read(e->uc, UC_ARM_REG_SP, &sp);
-		//dbg("pre-fixup: PC=%08x, LR=%08x, SP=%08x\n", pc,lr,sp);
-
-		uc_reg_write(e->uc, UC_ARM_REG_CPSR, &irq_fixup_cpsr);
-		//uc_reg_write(e->uc, UC_ARM_REG_PC, &pc);
-
-		uc_reg_read(e->uc, UC_ARM_REG_PC, &pc);
-		uc_reg_read(e->uc, UC_ARM_REG_LR, &lr);
-		uc_reg_read(e->uc, UC_ARM_REG_SP, &sp);
-		//dbg("post-fixup: PC=%08x, LR=%08x, SP=%08x\n", pc,lr,sp);
-		destroy_irq_fixup_hook(e, pc);
-
-		log_context(e, pc);
-		die = false;
-		break;
 	case HALT_INTERRUPT:
 		die = __handle_interrupt(e);
-		break;
-	case HALT_IRQ:
-		die = __handle_irqs(e);
 		break;
 	case HALT_BROM_ON_TO_SRAM_ON:
 		die = __enable_sram_mirror(e);
@@ -406,6 +236,7 @@ int starlet_init(starlet *emu)
 		return -1;
 	}
 
+	uc_excp_passthru(emu->uc, true);
 	emu->state = (STATE_BROM_MAP_ON);
 	emu->halt_hook = -1;
 	init_mmu(emu);

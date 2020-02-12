@@ -48,6 +48,8 @@ int main(void)
 
 	// Actually emulate something until we halt
 	starlet_run(&emu);
+
+	printf("Stopped running, halt = %08x\n", emu.halt_code);
 	starlet_destroy(&emu);
 
 	return 0;

@@ -131,10 +131,10 @@ void handle_nand_command(starlet *e, s64 ctrl)
 	// User requested an IRQ after NAND command completion
 	if (ctrl & 0x40000000)
 	{
-		// Set the NAND IRQ bit, then schedule the handler to force
-		// guest code into throwing an IRQ exception
-		e->pending_irq |= IRQ_NAND;
-		register_halt_hook(e, HALT_IRQ);
+		// Set the NAND IRQ bit, then raise an IRQ
+		write32(e->uc, HW_ARM_INTSTS,
+			read32(e->uc, HW_ARM_INTSTS) | IRQ_NAND);
+		uc_assert_irq(e->uc);
 	}
 }
 
@@ -623,8 +623,6 @@ static bool __mmio_hlwd(uc_engine *uc, uc_mem_type type, u64 address,
 		// register because guest writes will clear bits
 		case HW_ARM_INTSTS:
 			//LOG(e, INTERRUPT, "ARM_INTSTS read");
-			tmp = read32(uc, HW_ARM_INTEN);
-			write32(uc, HW_ARM_INTSTS, e->pending_irq & tmp);
 			break;
 
 		case EFUSE_ADDR:
@@ -650,7 +648,6 @@ static bool __mmio_hlwd(uc_engine *uc, uc_mem_type type, u64 address,
 
 		case HW_ARM_INTSTS:
 			//LOG(e, INTERRUPT, "Cleared %08x on ARM_INTSTS", value);
-			e->pending_irq = (e->pending_irq & ~value);
 			break;
 
 		case HW_SRNPROT:

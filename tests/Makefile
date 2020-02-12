@@ -3,7 +3,9 @@
 
 # We [and end-users] have to link against libunicorn, libpthread, and openssl.
 
-CFLAGS		:= -g -I../src/ -lunicorn -lpthread -lcrypto
+CFLAGS		:= -I${HOME}/hosaka-corp/unicorn/include/ \
+			-L${HOME}/hosaka-corp/unicorn/ \
+			-g -I../src/ -lunicorn -lpthread -lcrypto
 LIBSTFU_A	:= ../src/libstfu.a
 
 # Apparently the ordering of source files seems to matter here.

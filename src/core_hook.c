@@ -10,6 +10,7 @@
 #include <unicorn/unicorn.h>
 #include <assert.h>
 #include "util.h"
+#include "ios.h"
 
 #define LOGGING 1
 #define DEBUG 1
@@ -117,38 +118,48 @@ void __hook_halt(uc_engine *uc, u64 addr, u32 size, starlet *emu)
 	uc_emu_stop(uc);
 }
 
-// __hook_syscall_fixup()
-// Hook to-be-scheduled after we take an 'undef' exception.
-void __hook_syscall_fixup(uc_engine *uc, u64 addr, u32 size, starlet *emu)
-{
-	emu->halt_code = HALT_SYSCALL_FIXUP;
-	uc_emu_stop(uc);
-}
 
-// __hook_irq_fixup()
-// Hook to-be-scheduled after we take an 'irq' exception.
-void __hook_irq_fixup(uc_engine *uc, u64 addr, u32 size, starlet *emu)
-{
-	emu->halt_code = HALT_IRQ_FIXUP;
-	uc_emu_stop(uc);
-}
+
 
 
 // __hook_intr()
-// Interrupt-handling (UC_HOOK_INTR) hook
+// Main exception hook [apart from the undefined instruction exception].
 void __hook_intr(uc_engine *uc, uint32_t intno, starlet *e)
 {
-	e->halt_code = HALT_INTERRUPT;
+	u32 pc;
+	uc_reg_read(e->uc, UC_ARM_REG_PC, &pc);
 	e->interrupt = intno;
+	LOG(e, DEBUG, "In interrupt %d hook, pc=%08x", intno, pc);
+
+	e->halt_code = HALT_INTERRUPT;
 	uc_emu_stop(uc);
 }
 
+
+
+
+
 // __hook_insn_invalid()
-// Hook triggered on UC_HOOK_INSN_INVALID (invalid instruction)
+// Hook triggered on UC_HOOK_INSN_INVALID (invalid instruction).
 bool __hook_insn_invalid(uc_engine *uc, starlet *e)
 {
-	e->halt_code = HALT_INSN_INVALID;
-	uc_emu_stop(uc);
+	u32 pc;
+	uc_reg_read(e->uc, UC_ARM_REG_PC, &pc);
+	u32 instr = vread32(e->uc, pc);
+	u32 sc_num = (instr & 0x00ffffe0) >> 5;
+
+	if ((instr & 0xe6000000) != 0xe6000000)
+	{
+		LOG(e, DEBUG, "Got bad instruction %08x at PC=%08x", 
+			instr, pc);
+		return false;
+	}
+
+	log_context(e, pc);
+	log_syscall(e, sc_num);
+
+	//LOG(e, DEBUG, "In invalid instruction hook, %08x @ pc=%08x", 
+	//		instr, pc);
 	return true;
 }
 
@@ -200,8 +211,12 @@ int register_core_hooks(starlet *e)
 {
 	uc_hook x, y, z;
 	uc_hook_add(e->uc, &x,UC_HOOK_MEM_UNMAPPED,__hook_unmapped, e, 1, 0);
+
+
 	uc_hook_add(e->uc, &x,UC_HOOK_INTR, __hook_intr, e, 1, 0);
 	uc_hook_add(e->uc, &x,UC_HOOK_INSN_INVALID, __hook_insn_invalid,e,1,0);
+
+
 	uc_hook_add(e->uc, &x,UC_HOOK_CODE,__hook_enter_boot1, e,
 			0xfff00000, 0xfff00000);
 	uc_hook_add(e->uc, &x,UC_HOOK_CODE,__hook_enter_boot2, e,
@@ -233,43 +248,6 @@ int register_core_hooks(starlet *e)
 	//uc_hook_add(e->uc, &x,UC_HOOK_CODE,__hook_log_code, e, 
 	//		0x20000e38, 0x2000120e);
 
-}
-
-// register_syscall_fixup_hook()
-// Register a post-syscall fixup hook.
-static u32 fixup_hooks[0x1000];
-static u32 fixup_hook_idx;
-int register_syscall_fixup_hook(starlet *e, u32 addr)
-{
-	for (int i = 0; i < fixup_hook_idx; i++)
-	{
-		if (addr == fixup_hooks[i])
-			return -1;
-	}
-	uc_hook x;
-	uc_hook_add(e->uc, &x, UC_HOOK_CODE, __hook_syscall_fixup,e,addr,addr);
-	fixup_hooks[fixup_hook_idx] = addr;
-	fixup_hook_idx++;
-}
-
-// register_irq_fixup_hook()
-// Register a post-IRQ fixup hook.
-static u32 irq_fixup_hooks[0x1000];
-static u32 irq_fixup_hook_idx;
-static uc_hook irq_fixup_hook;
-int register_irq_fixup_hook(starlet *e, u32 addr)
-{
-	uc_hook_add(e->uc, &irq_fixup_hook, UC_HOOK_CODE, __hook_irq_fixup,
-			e, addr, addr);
-	irq_fixup_hooks[irq_fixup_hook_idx] = addr;
-	irq_fixup_hook_idx++;
-}
-int destroy_irq_fixup_hook(starlet *e, u32 addr)
-{
-	irq_fixup_hook_idx--;
-	assert(addr == irq_fixup_hooks[irq_fixup_hook_idx]);
-	uc_hook_del(e->uc, irq_fixup_hook);
-	irq_fixup_hook = -1;
 }
 
 

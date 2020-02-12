@@ -6,7 +6,9 @@ OBJ	:= $(SRC:.c=.o)
 TARGET 	:= libstfu
 SHARED	:= $(TARGET).so
 STATIC	:= $(TARGET).a
-CFLAGS	:= -lunicorn -lpthread -lcrypto -fPIC -g
+CFLAGS	:= -I${HOME}/hosaka-corp/unicorn/include/ \
+	-L${HOME}/hosaka-corp/unicorn/ \
+	-lunicorn -lpthread -lcrypto -fPIC -g
 
 all: $(SHARED) $(STATIC)
 %.o: %.c
