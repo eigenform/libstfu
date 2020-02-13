@@ -16,6 +16,31 @@
 #define LOGGING 1
 #define DEBUG 1
 
+
+void irq_fire(starlet *e, u32 irqnum)
+{
+	// Set this IRQ bit in our internal representation
+	e->pending_irq = (e->pending_irq & e->enabled_irq) | irqnum;
+	write32(e->uc, HW_ARM_INTSTS, e->pending_irq);
+
+	// Assert an IRQ, causing an exception
+	uc_assert_irq(e->uc);
+	LOG(e, IRQ, "Asserted IRQ %08x, pending=%08x", irqnum, e->pending_irq);
+}
+
+void irq_status_write(starlet *e, s64 value)
+{
+	u32 pc;
+	u32 sts = read32(e->uc, HW_ARM_INTSTS);
+	uc_reg_read(e->uc, UC_ARM_REG_PC, &pc);
+
+	e->pending_irq &= value;
+	write32(e->uc, HW_ARM_INTSTS, e->pending_irq);
+}
+
+
+
+
 // ----------------------------------------------------------------------------
 
 #define NAND_PAGE_LEN		0x840
@@ -55,19 +80,15 @@ void nand_dma_write(starlet *e, u32 flags, u32 len)
 
 	if (len == 0x800)
 	{
-		//dbg("NAND dma on %08x, len=%08x\n", data_addr, len);
-		//uc_virtual_mem_write(e->uc, data_addr, nand_buf, len);
 		uc_mem_write(e->uc, data_addr, nand_buf, len);
-		memset(nand_buf, 0, 0x10000);
+		//uc_vmem_write(e->uc, data_addr, nand_buf, len);
 	}
 	else if (len == 0x840)
 	{
-		//dbg("NAND dma on %08x, len=%08x\n", data_addr, 0x800);
-		//dbg("NAND dma on %08x, len=%08x\n", ecc_addr, 0x40);
-		//uc_virtual_mem_write(e->uc, data_addr, nand_buf, 0x800);
-		//uc_virtual_mem_write(e->uc, ecc_addr, &nand_buf[0x800], 0x40);
 		uc_mem_write(e->uc, data_addr, nand_buf, 0x800);
 		uc_mem_write(e->uc, ecc_addr, &nand_buf[0x800], 0x40);
+		//uc_vmem_write(e->uc, data_addr, nand_buf, 0x800);
+		//uc_vmem_write(e->uc, ecc_addr, &nand_buf[0x800], 0x40);
 
 		if (flags & NAND_FLAG_ECC)
 		{
@@ -75,12 +96,12 @@ void nand_dma_write(starlet *e, u32 flags, u32 len)
 			{
 				fix_addr = (ecc_addr ^ 0x40) + (i * 4);
 				calc_ecc(nand_buf + (0x200 * i), ecc);
-				//uc_virtual_mem_write(e->uc,fix_addr,&ecc,4);
-				uc_mem_write(e->uc,fix_addr,&ecc,4);
+				uc_vmem_write(e->uc,fix_addr,&ecc,4);
+				//uc_mem_write(e->uc,fix_addr,&ecc,4);
 			}
 		}
-		memset(nand_buf, 0, 0x10000);
 	}
+	memset(nand_buf, 0, 0x10000);
 }
 
 
@@ -96,10 +117,11 @@ void handle_nand_command(starlet *e, s64 ctrl)
 	u32 data_addr = read32(e->uc, NAND_DATABUF);
 	u32 ecc_addr = read32(e->uc, NAND_ECCBUF);
 	uc_reg_read(e->uc, UC_ARM_REG_LR, &lr);
-	//log("NAND handling command %02x, flag=%08x databuf=%08x,eccbuf=%08x (lr=%08x)\n", 
-	//		cmd, flags, data_addr, ecc_addr, lr);
 
 	switch(cmd) {
+	// No idea what this does, perhaps nothing?
+	case 0x00: 
+		break;
 
 	// Read page from NAND (used in bootloaders)
 	case NAND_CMD_READ0b:
@@ -107,16 +129,16 @@ void handle_nand_command(starlet *e, s64 ctrl)
 		nand_dma_write(e, flags, dsize);
 		break;
 
-	// No idea what this does, perhaps nothing?
-	case 0x00:
-		break;
-
 	// Don't know what this does either; resets all the registers?
 	case NAND_CMD_RESET:
+		LOG(e, NAND, "RESET flag=%08x, dbuf=%08x, ebuf=%08x (lr=%08x)",
+			flags, data_addr, ecc_addr, lr);
 		break;
 
 	// Reads the NAND ID (I imagine hardware behaviour is different)
 	case NAND_CMD_READ_ID:
+		LOG(e, NAND, "READ_ID flag=%08x, dbuf=%08x, ebuf=%08x (lr=%08x)",
+			flags, data_addr, ecc_addr, lr);
 		uc_mem_write(e->uc, data_addr, nand_id, 5);
 		break;
 
@@ -129,13 +151,7 @@ void handle_nand_command(starlet *e, s64 ctrl)
 	}
 
 	// User requested an IRQ after NAND command completion
-	if (ctrl & 0x40000000)
-	{
-		// Set the NAND IRQ bit, then raise an IRQ
-		write32(e->uc, HW_ARM_INTSTS,
-			read32(e->uc, HW_ARM_INTSTS) | IRQ_NAND);
-		uc_assert_irq(e->uc);
-	}
+	if (ctrl & 0x40000000) irq_fire(e, IRQ_NAND);
 }
 
 // __mmio_nand()
@@ -213,7 +229,6 @@ static void handle_aes_command(starlet *e, s64 value)
 	uc_mem_read(e->uc, src_addr, aes_src_buf, len);
 
 	LOG(e, AES, "DMA dst=%08x len=%08x", dst_addr, len);
-
 	if (use_aes)
 	{
 		AES_KEY key;
@@ -258,11 +273,12 @@ static bool __mmio_aes(uc_engine *uc, uc_mem_type type, u64 address,
 	{
 		switch (address) {
 		case AES_CTRL: 
+			LOG(e, AES, "AES_CTRL write %08x", value);
 			if (value & 0x80000000)
 				handle_aes_command(e, value);
 			break;
 		case AES_KEY_FIFO:
-			//dbg("AES KEY FIFO add %08x\n", value);
+			LOG(e, AES, "AES_FIFO write %08x", value);
 			memmove(aes_key_fifo, aes_key_fifo + 0x4, 0x0c);
 			aes_key_fifo[0x0c] = value >> 24;
 			aes_key_fifo[0x0d] = (value >> 16) & 0xff;
@@ -274,7 +290,7 @@ static bool __mmio_aes(uc_engine *uc, uc_mem_type type, u64 address,
 			//printf("\n");
 			break;
 		case AES_IV_FIFO:
-			//dbg("AES IV FIFO add %08x\n", value);
+			LOG(e, AES, "AES_IV_FIFO write %08x", value);
 			memmove(aes_iv_fifo, aes_iv_fifo + 0x4, 0x0c);
 			aes_iv_fifo[0x0c] = value >> 24;
 			aes_iv_fifo[0x0d] = (value >> 16) & 0xff;
@@ -596,6 +612,7 @@ static bool __mmio_gpio(uc_engine *uc, uc_mem_type type, u64 address,
 
 // ----------------------------------------------------------------------------
 
+
 // __mmio_hlwd()
 // Hollywood register MMIO handler
 static bool __mmio_hlwd(uc_engine *uc, uc_mem_type type, u64 address,
@@ -606,23 +623,38 @@ static bool __mmio_hlwd(uc_engine *uc, uc_mem_type type, u64 address,
 	if (type == UC_MEM_READ)
 	{
 		switch (address) {
+		case HW_ARB_CFG_M0:
+		case HW_ARB_CFG_M1:
+		case HW_ARB_CFG_M2:
+		case HW_ARB_CFG_M3:
+		case HW_ARB_CFG_M4:
+		case HW_ARB_CFG_M5:
+		case HW_ARB_CFG_M6:
+		case HW_ARB_CFG_M7:
+		case HW_ARB_CFG_M8:
+		case HW_ARB_CFG_M9:
+		case HW_ARB_CFG_MA:
+		case HW_ARB_CFG_MB:
+		case HW_ARB_CFG_MC:
+		case HW_ARB_CFG_MD:
+		case HW_ARB_CFG_ME:	
+		case HW_ARB_CFG_MF:	
+		case HW_ARB_CFG_CPU:	
+		case HW_ARB_CFG_DMA:	
+		case HW_SPARE0:
+		case HW_BOOT0:
+		case HW_VERSION: 
+		case EFUSE_DATA:
+			break;
 
 		// Update the timer before every read.
 		// Not clear if this actually affects performance or accuracy.
 		case HW_TIMER:
 			tmp = read32(uc, HW_TIMER) + 4;
 			write32(uc, HW_TIMER, tmp);
-			//dbg("HW_TIMER=%08x\n", tmp);
 			break;
-
 		case HW_ALARM:
-			//dbg("%s\n", "HW_ALARM read");
-			break;
-
-		// We use e->arm_int_sts to keep the actual value of this
-		// register because guest writes will clear bits
-		case HW_ARM_INTSTS:
-			//LOG(e, INTERRUPT, "ARM_INTSTS read");
+			LOG(e, MMIO, "HW_ALARM read");
 			break;
 
 		case EFUSE_ADDR:
@@ -633,22 +665,46 @@ static bool __mmio_hlwd(uc_engine *uc, uc_mem_type type, u64 address,
 
 		// By default, just don't log accesses
 		default:
+			//LOG(e, MMIO, "unimpl HLWD %08x read", address);
 			break;
 		}
 	}
 	else if (type == UC_MEM_WRITE)
 	{
 		switch (address) {
+		case HW_ARB_CFG_M0:
+		case HW_ARB_CFG_M1:
+		case HW_ARB_CFG_M2:
+		case HW_ARB_CFG_M3:
+		case HW_ARB_CFG_M4:
+		case HW_ARB_CFG_M5:
+		case HW_ARB_CFG_M6:
+		case HW_ARB_CFG_M7:
+		case HW_ARB_CFG_M8:
+		case HW_ARB_CFG_M9:
+		case HW_ARB_CFG_MA:
+		case HW_ARB_CFG_MB:
+		case HW_ARB_CFG_MC:
+		case HW_ARB_CFG_MD:
+		case HW_ARB_CFG_ME:	
+		case HW_ARB_CFG_MF:	
+		case HW_ARB_CFG_CPU:	
+		case HW_ARB_CFG_DMA:	
+			break;
+
 		case HW_TIMER:
 			//dbg("HW_TIMER write %08x\n", value);
 			break;
 		case HW_ALARM:
-			//dbg("HW_ALARM write %08x\n", value);
+			LOG(e, MMIO, "HW_ALARM write %08x", value);
+			break;
+		case HW_ARM_INTSTS:
+			irq_status_write(e, value);
+			break;
+		case HW_ARM_INTEN:
+			e->enabled_irq = value;
 			break;
 
-		case HW_ARM_INTSTS:
-			//LOG(e, INTERRUPT, "Cleared %08x on ARM_INTSTS", value);
-			break;
 
 		case HW_SRNPROT:
 			// Enable the SRAM mirror
@@ -660,7 +716,6 @@ static bool __mmio_hlwd(uc_engine *uc, uc_mem_type type, u64 address,
 				register_halt_hook(e, HALT_BROM_ON_TO_SRAM_ON);
 			}
 			break;
-
 		case HW_SPARE0:
 			// Deal with this unknown AHB flush-related bit
 			if ((value & 0x10000) == 0)
@@ -697,6 +752,7 @@ static bool __mmio_hlwd(uc_engine *uc, uc_mem_type type, u64 address,
 
 		// By default, don't log any accesses
 		default: 
+			LOG(e, MMIO, "unimpl HLWD %08x write %08x", address, value);
 			break;
 		}
 	}

@@ -20,6 +20,7 @@ enum log_types {
 	SHA,
 	AES,
 	INTERRUPT,
+	IRQ,
 };
 
 
@@ -159,6 +160,7 @@ typedef struct starlet
 
 	u32 timer;		// Hollywood timer
 	u32 interrupt;		// Pending system interrupt number 
+	u32 enabled_irq;	// Current IRQ enable bitmask
 	u32 pending_irq;	// Pending IRQ bitmask (1=asserted)
 	u32 stepped;		// Are we attached to a debugger?
 

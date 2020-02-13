@@ -18,6 +18,7 @@ const char *log_type_name[] = {
 	"SHA",
 	"AES",
 	"INTRPT",
+	"IRQ",
 };
 
 static char tmp_buf[MAX_ENTRY_LEN];

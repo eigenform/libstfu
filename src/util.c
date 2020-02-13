@@ -103,3 +103,9 @@ u32 vread32(uc_engine *uc, u32 addr)
 	uc_vmem_read(uc, addr, &val, 4);
 	return htobe32(val);
 }
+
+void vwrite32(uc_engine *uc, u32 addr, u32 val)
+{
+	u32 value = be32toh(val);
+	uc_vmem_write(uc, addr, &val, 4);
+}

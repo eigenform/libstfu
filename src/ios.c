@@ -11,6 +11,7 @@ struct r_ctx
 {
 	const char *name;
 	u32 lr;
+	u32 pc;
 	u32 r[9];
 };
 
@@ -25,6 +26,7 @@ struct syscall_info
 static char strbuf[0x100];
 struct r_ctx fmt_ctx = {
 	NULL,
+	0,
 	0,
 	{ 0 },
 };
@@ -80,48 +82,58 @@ const char *ctx_name[] = {
 
 void ios_log_default(starlet *e, struct r_ctx *ctx)
 {
-	LOG(e, IOS, "%s() (lr=%08x)", ctx->name, ctx->lr);
+	LOG(e, IOS, "%s() (pc=%08x)", ctx->name, ctx->pc);
 }
 
 void ios_log_mq_op(starlet *e, struct r_ctx *ctx)
 {
-	LOG(e, IOS, "%s(%d, 0x%08x, 0x%08x) (lr=%08x)", 
-		ctx->name, ctx->r[0], ctx->r[1], ctx->r[2], ctx->lr);
+	LOG(e, IOS, "%s(%d, 0x%08x, 0x%08x) (pc=%08x)", 
+		ctx->name, ctx->r[0], ctx->r[1], ctx->r[2], ctx->pc);
 }
 
 void ios_thread_create(starlet *e, struct r_ctx *ctx)
 {
-	LOG(e, IOS, "%s(0x%08x, 0x%08x, 0x%08x, 0x%08x, %d, %d) (lr=%08x)", 
+	LOG(e, IOS, "%s(0x%08x, 0x%08x, 0x%08x, 0x%08x, %d, %d) (pc=%08x)", 
 		ctx->name, ctx->r[0], ctx->r[1], ctx->r[2], ctx->r[3], 
-		ctx->r[4], ctx->r[5], ctx->lr);
+		ctx->r[4], ctx->r[5], ctx->pc);
 }
 void ios_thread_cancel(starlet *e, struct r_ctx *ctx)
 {
-	LOG(e, IOS, "%s(%d, 0x%08x) (lr=%08x)", ctx->name, 
-		ctx->r[0], ctx->r[1], ctx->lr);
+	LOG(e, IOS, "%s(%d, 0x%08x) (pc=%08x)", ctx->name, 
+		ctx->r[0], ctx->r[1], ctx->pc);
 }
 void ios_timer_create(starlet *e, struct r_ctx *ctx)
 {
-	LOG(e, IOS, "%s(%d, %d, %d, 0x%08x) (lr=%08x)", ctx->name, 
-		ctx->r[0], ctx->r[1], ctx->r[2], ctx->r[3], ctx->lr);
+	LOG(e, IOS, "%s(%d, %d, %d, 0x%08x) (pc=%08x)", ctx->name, 
+		ctx->r[0], ctx->r[1], ctx->r[2], ctx->r[3], ctx->pc);
 }
 void ios_heap_alloc(starlet *e, struct r_ctx *ctx)
 {
-	LOG(e, IOS, "%s(%d, 0x%08x) (lr=%08x)", ctx->name, 
-		ctx->r[0], ctx->r[1], ctx->lr);
+	LOG(e, IOS, "%s(%d, 0x%08x) (pc=%08x)", ctx->name, 
+		ctx->r[0], ctx->r[1], ctx->pc);
 }
 void ios_log_str_int(starlet *e, struct r_ctx *ctx)
 {
 	uc_vmem_read(e->uc, ctx->r[0], strbuf, 0x100);
-	LOG(e, IOS, "%s(\"%s\", %d) (lr=%08x)", ctx->name, 
-		strbuf, ctx->r[1], ctx->lr);
+	LOG(e, IOS, "%s(\"%s\", %d) (pc=%08x)", ctx->name, 
+		strbuf, ctx->r[1], ctx->pc);
 }
 
 void ios_log_int(starlet *e, struct r_ctx *ctx)
 {
-	LOG(e, IOS, "%s(%d) (lr=%08x)", ctx->name, ctx->r[0], ctx->lr);
+	LOG(e, IOS, "%s(%d) (pc=%08x)", ctx->name, ctx->r[0], ctx->pc);
 }
 
+void ios_log_hexint(starlet *e, struct r_ctx *ctx)
+{
+	LOG(e, IOS, "%s(0x%08x) (pc=%08x)", ctx->name, ctx->r[0], ctx->pc);
+}
+
+void ios_log_hexint4(starlet *e, struct r_ctx *ctx)
+{
+	LOG(e, IOS, "%s(0x%08x, 0x%08x, 0x%08x, 0x%08x) (pc=%08x)", 
+		ctx->name, ctx->r[0], ctx->r[1], ctx->r[2], ctx->r[3], ctx->pc);
+}
 // Table of syscalls.
 // Entries with a NULL function pointer are not logged.
 const struct syscall_info syscall_table[0x80] = {
@@ -139,7 +151,7 @@ const struct syscall_info syscall_table[0x80] = {
 	{ "mqueue_destroy",		ios_log_int },
 	{ "mqueue_send",		ios_log_mq_op },
 	{ "mqueue_jam",			ios_log_mq_op },
-	{ "mqueue_recv",		ios_log_mq_op },
+	{ "mqueue_recv",		NULL },
 	{ "mqueue_register_handler",	ios_log_default },
 	{ "mqueue_destroy_handler",	ios_log_int },
 	{ "timer_create",		ios_timer_create },
@@ -224,7 +236,7 @@ const struct syscall_info syscall_table[0x80] = {
 	{ "iosc_pubkey_export",		ios_log_default },
 	{ "iosc_sharedkey_compute",	ios_log_default },
 	{ "iosc_set_data",		ios_log_default },
-	{ "iosc_get_data",		ios_log_default },
+	{ "iosc_get_data",		ios_log_hexint4 },
 	{ "iosc_get_keysize",		ios_log_default },
 	{ "iosc_get_sigsize",		ios_log_default },
 	{ "iosc_genhash_async", 	ios_log_default },
@@ -234,7 +246,7 @@ const struct syscall_info syscall_table[0x80] = {
 	{ "iosc_decrypt_async", 	ios_log_default },
 	{ "iosc_decrypt",		ios_log_default },
 	{ "iosc_pubkey_verify_sign",	ios_log_default },
-	{ "iosc_gen_blockmac",		ios_log_default },
+	{ "iosc_gen_blockmac",		ios_log_hexint4 },
 	{ "iosc_get_blockmac_async",	ios_log_default },
 	{ "iosc_import_cert",		ios_log_default },
 	{ "iosc_get_device_cert",	ios_log_default },
@@ -296,6 +308,7 @@ void log_syscall(starlet *e, u32 sc_num)
 	if (syscall_table[sc_num].print != NULL)
 	{
 		uc_reg_read(e->uc, UC_ARM_REG_LR, &fmt_ctx.lr);
+		uc_reg_read(e->uc, UC_ARM_REG_PC, &fmt_ctx.pc);
 		uc_reg_read(e->uc, UC_ARM_REG_R0, &fmt_ctx.r[0]);
 		uc_reg_read(e->uc, UC_ARM_REG_R1, &fmt_ctx.r[1]);
 		uc_reg_read(e->uc, UC_ARM_REG_R2, &fmt_ctx.r[2]);

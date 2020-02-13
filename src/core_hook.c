@@ -129,8 +129,8 @@ void __hook_intr(uc_engine *uc, uint32_t intno, starlet *e)
 	u32 pc;
 	uc_reg_read(e->uc, UC_ARM_REG_PC, &pc);
 	e->interrupt = intno;
-	LOG(e, DEBUG, "In interrupt %d hook, pc=%08x", intno, pc);
-
+	if (intno != 2)
+		LOG(e, INTERRUPT, "Entering exception vector %d, pc=%08x", intno, pc);
 	e->halt_code = HALT_INTERRUPT;
 	uc_emu_stop(uc);
 }
@@ -158,8 +158,6 @@ bool __hook_insn_invalid(uc_engine *uc, starlet *e)
 	log_context(e, pc);
 	log_syscall(e, sc_num);
 
-	//LOG(e, DEBUG, "In invalid instruction hook, %08x @ pc=%08x", 
-	//		instr, pc);
 	return true;
 }
 

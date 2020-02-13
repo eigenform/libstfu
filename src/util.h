@@ -25,8 +25,10 @@ u32 le16(u32 x);
 
 u32 read32(uc_engine *uc, u32 addr);
 u16 read16(uc_engine *uc, u32 addr);
+u32 vread32(uc_engine *uc, u32 addr);
 void write32(uc_engine *uc, u32 addr, u32 val);
 void write16(uc_engine *uc, u32 addr, u16 val);
+void vwrite32(uc_engine *uc, u32 addr, u32 val);
 
 u32 vread32(uc_engine *uc, u32 addr);
 #endif //_UTIL_H

@@ -108,26 +108,31 @@ enum arm_irq {
 #define HW_GPIO_STRAPS		0x0d8000f8
 #define HW_GPIO_OWNER		0x0d8000fc
 
-//#define HW_AHB_			0x0d800100
-//#define HW_AHB_			0x0d800104
-//#define HW_AHB_			0x0d800108
-//#define HW_AHB_			0x0d80010c
-//#define HW_AHB_			0x0d800110
-//#define HW_AHB_			0x0d800114
-//#define HW_AHB_			0x0d800118
-//#define HW_AHB_			0x0d80011c
-//#define HW_AHB_			0x0d800120
-//#define HW_AHB_			0x0d800124
-//#define HW_AHB_			0x0d800128
-//#define HW_AHB_			0x0d80012c
-//#define HW_AHB_			0x0d800130
-//#define HW_AHB_			0x0d800134
-//#define HW_AHB_			0x0d800138
-//#define HW_AHB_			0x0d80013c
-//#define HW_AHB_			0x0d800140
+#define HW_ARB_CFG_M0		0x0d800100
+#define HW_ARB_CFG_M1		0x0d800104
+#define HW_ARB_CFG_M2		0x0d800108
+#define HW_ARB_CFG_M3		0x0d80010c
+#define HW_ARB_CFG_M4		0x0d800110
+#define HW_ARB_CFG_M5		0x0d800114
+#define HW_ARB_CFG_M6		0x0d800118
+#define HW_ARB_CFG_M7		0x0d80011c
+#define HW_ARB_CFG_M8		0x0d800120
+#define HW_ARB_CFG_M9		0x0d800124
+#define HW_ARB_CFG_MA		0x0d800128
+#define HW_ARB_CFG_MB		0x0d80012c
+#define HW_ARB_CFG_MC		0x0d800130
+#define HW_ARB_CFG_MD		0x0d800134
+#define HW_ARB_CFG_ME		0x0d800138
+#define HW_ARB_CFG_MF		0x0d80013c
+#define HW_ARB_CFG_CPU		0x0d800140
+#define HW_ARB_CFG_DMA		0x0d800144
+
 
 #define HW_SPARE0		0x0d800188
 #define HW_BOOT0		0x0d80018c
+
+#define HW_PLLSYS		0x0d8001b0
+#define HW_PLLSYSEXT		0x0d8001b4
 
 #define EFUSE_ADDR    		0x0d8001ec
 #define EFUSE_DATA   		0x0d8001f0

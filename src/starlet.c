@@ -236,6 +236,12 @@ int starlet_init(starlet *emu)
 		return -1;
 	}
 
+	write32(emu->uc, HW_ARB_CFG_MC, 0x00000400);
+	write32(emu->uc, HW_ARB_CFG_ME, 0x00000400);
+	write32(emu->uc, HW_PLLSYS, 0x004011c0);
+	write32(emu->uc, HW_PLLSYSEXT, 0x004011c0);
+	//write32(emu->uc, HW_VERSION, 0x000000f0);
+
 	uc_excp_passthru(emu->uc, true);
 	emu->state = (STATE_BROM_MAP_ON);
 	emu->halt_hook = -1;
