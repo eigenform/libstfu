@@ -2,6 +2,9 @@
 An emulator for the "Starlet" ARM core in the Nintendo Wii, implemented with
 the [Unicorn Engine](https://github.com/unicorn-engine/unicorn).
 
+**NOTE:** I'm not working on this project anymore. You can find more up-to-date
+work on this space in [eigenform/ironic](https://github.com/eigenform/ironic) instead.
+
 ## About
 The rationale behind this project is multi-faceted, although it was originally
 started in order to create a harness for fuzzing/analyzing the first and
